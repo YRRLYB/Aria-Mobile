@@ -26,7 +26,7 @@ import { useLyricsSync } from "@/hooks/useLyricsSync";
 import { useDiscovery, type SearchBundle } from "@/hooks/useDiscovery";
 import { ConnectScreen } from "./ConnectScreen";
 import { clearConnection, readConnection, verifyConnection } from "./connection";
-import { AriaAudio, isNativeApp, type AriaAudioEvent } from "./native/ariaAudio";
+import { AriaAudio, isNativeApp, setStatusBarIconsLight, type AriaAudioEvent } from "./native/ariaAudio";
 import { MiniPlayer, TabBar } from "./Chrome";
 import { HomeScreen, LibraryScreen, SearchScreen, SettingsScreen } from "./screens";
 import { NowPlaying } from "./NowPlaying";
@@ -750,7 +750,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     <div className="flex h-full flex-col bg-[linear-gradient(170deg,#f7f8fb_0%,#eef1fa_60%,#f4eef8_100%)]">
       <audio ref={audioRef} preload="metadata" className="hidden" />
 
-      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto">
+      <div className="safe-top no-scrollbar min-h-0 flex-1 overflow-y-auto">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={activeTab}
@@ -774,6 +774,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       <AnimatePresence>
         {nowPlayingOpen && <NowPlaying {...controls} onClose={() => setNowPlayingOpen(false)} />}
       </AnimatePresence>
+      <StatusBarIconsSync light={nowPlayingOpen} />
     </div>
   );
 }
@@ -788,4 +789,11 @@ function playbackStreamUrl(track: Track, hifi: boolean, level: QualityLevel): st
   const target = hifi ? (levels[levels.length - 1] ?? level) : level;
   const separator = track.streamUrl.includes("?") ? "&" : "?";
   return `${track.streamUrl}${separator}level=${target}`;
+}
+
+function StatusBarIconsSync({ light }: { light: boolean }) {
+  useEffect(() => {
+    setStatusBarIconsLight(light);
+  }, [light]);
+  return null;
 }

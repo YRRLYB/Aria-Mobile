@@ -48,3 +48,14 @@ export const AriaAudio = registerPlugin<AriaAudioPluginInterface>("AriaAudio");
 export function isNativeApp(): boolean {
   return Capacitor.isNativePlatform();
 }
+
+// Shell helpers without a cross-platform plugin (status-bar icon appearance
+// for the immersive dark player page). No-op outside the native app.
+export const AriaShell = registerPlugin<{ setStatusBarIconsLight(options: { light: boolean }): Promise<void> }>(
+  "AriaShell",
+);
+
+export function setStatusBarIconsLight(light: boolean): void {
+  if (!isNativeApp()) return;
+  void AriaShell.setStatusBarIconsLight({ light }).catch(() => undefined);
+}

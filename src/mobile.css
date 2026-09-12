@@ -26,10 +26,10 @@ body {
 }
 
 .safe-top {
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--aria-safe-top, env(safe-area-inset-top, 0px));
 }
 .safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--aria-safe-bottom, env(safe-area-inset-bottom, 0px));
 }
 
 .tab-bar {

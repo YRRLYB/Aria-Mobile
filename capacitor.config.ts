@@ -6,10 +6,11 @@ const config: CapacitorConfig = {
   webDir: "dist",
   android: {
     allowMixedContent: true,
-    // Reserve space for the status bar / display cutout on every Android
-    // version: without this the WebView draws under the system clock and
-    // battery indicator on edge-to-edge devices.
-    adjustMarginsForEdgeToEdge: "force",
+    // True immersive layout: the web layer paints behind the system bars and
+    // MainActivity injects the safe-area sizes as --aria-safe-top/-bottom CSS
+    // variables (hard margins would leave a flat white strip under the
+    // status bar that clashes with the gradient pages).
+    adjustMarginsForEdgeToEdge: "disable",
   },
   server: {
     // The whole data source is a plain-http LAN desktop. Loading the app from
