@@ -61,14 +61,16 @@ public class AriaShellPlugin extends Plugin {
             return;
         }
         getActivity().runOnUiThread(() -> {
-            android.view.View view = getBridge().getWebView();
+            android.view.View decor = getBridge().getActivity().getWindow().getDecorView();
+            float density = decor.getResources().getDisplayMetrics().density;
             androidx.core.graphics.Insets insets = WindowInsetsCompat
-                    .toWindowInsetsCompat(view.getRootWindowInsets())
+                    .toWindowInsetsCompat(decor.getRootWindowInsets())
                     .getInsets(WindowInsetsCompat.Type.systemBars()
                             | WindowInsetsCompat.Type.displayCutout());
             JSObject result = new JSObject();
-            result.put("top", insets.top);
-            result.put("bottom", insets.bottom);
+            // CSS px (density-adjusted) so JS can apply them directly.
+            result.put("top", Math.round(insets.top / density));
+            result.put("bottom", Math.round(insets.bottom / density));
             call.resolve(result);
         });
     }

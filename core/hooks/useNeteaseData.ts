@@ -120,17 +120,24 @@ export function useNeteaseData(options: {
   }
 
   async function refreshNeteaseData() {
+    // Per-pool tolerance: one flaky/rate-limited pool (personal FM often 405s
+    // "操作频繁") must not wipe the other three.
     const [liked, daily, roam, playlists] = await Promise.all([
-      api.getProviderLiked(),
-      api.getProviderDaily(),
-      api.getProviderRoam(),
-      api.getProviderPlaylists(),
+      api.getProviderLiked().catch(() => null),
+      api.getProviderDaily().catch(() => null),
+      api.getProviderRoam().catch(() => null),
+      api.getProviderPlaylists().catch(() => null),
     ]);
-    const dailyUiTracks = daily.tracks.map(providerTrackToUiTrack);
-    const roamUiTracks = roam.tracks.map((track, index) => providerTrackToUiTrack(track, index + dailyUiTracks.length));
-    const likedUiTracks = liked.tracks.map((track, index) =>
-      providerTrackToUiTrack(track, index + dailyUiTracks.length + roamUiTracks.length),
-    );
+
+    const dailyUiTracks = daily ? daily.tracks.map(providerTrackToUiTrack) : [];
+    const roamUiTracks = roam
+      ? roam.tracks.map((track, index) => providerTrackToUiTrack(track, index + dailyUiTracks.length))
+      : [];
+    const likedUiTracks = liked
+      ? liked.tracks.map((track, index) =>
+          providerTrackToUiTrack(track, index + dailyUiTracks.length + roamUiTracks.length),
+        )
+      : [];
     const merged = mergeTracks([...dailyUiTracks, ...roamUiTracks, ...likedUiTracks]);
 
     setDailyTracks(dailyUiTracks);
@@ -138,7 +145,7 @@ export function useNeteaseData(options: {
     setNeteaseLikedTracks(likedUiTracks);
     setNeteaseLikedIds(Object.fromEntries(likedUiTracks.map((track) => [track.id, true])));
     setNeteaseTracks(trimTrackCache(merged));
-    setProviderPlaylists(playlists.playlists);
+    if (playlists) setProviderPlaylists(playlists.playlists);
     warmNeteaseTrackCache(merged);
     if (options.canAutoSelectFirstTrack && merged[0]) {
       options.onAutoSelectTrack(merged[0].id);

@@ -60,7 +60,9 @@ type RawSong = {
   id: number;
   name: string;
   ar?: Array<{ id: number; name: string }>;
+  singers?: Array<{ id: number; name: string }>;
   al?: { id: number; name: string; picUrl?: string };
+  album?: { id: number; name: string; picUrl?: string };
   dt?: number;
   privilege?: { maxbr?: number; pl?: number };
 };
@@ -70,8 +72,8 @@ function mapSong(song: RawSong): ProviderTrack {
   return {
     id: `netease:${song.id}`,
     title: song.name ?? `#${song.id}`,
-    artist: (song.ar ?? []).map((artist) => artist.name).join(" / "),
-    album: song.al?.name ?? "",
+    artist: (song.ar ?? song.singers ?? []).map((artist) => artist.name).join(" / "),
+    album: song.al?.name ?? song.album?.name ?? "",
     duration: song.dt ?? 0,
     // Display tag from the strongest tier the catalog reports; the real
     // played level arrives with streamMeta after warm/play.
@@ -79,7 +81,7 @@ function mapSong(song: RawSong): ProviderTrack {
     source: "netease",
     // Sentinel: resolved against songUrlV1 at playback time (MobileApp).
     streamUrl: `direct:${song.id}`,
-    coverUrl: song.al?.picUrl ?? null,
+    coverUrl: song.al?.picUrl ?? song.album?.picUrl ?? null,
     likedAt: null,
     bpm: null,
     bitrate: maxbr || null,

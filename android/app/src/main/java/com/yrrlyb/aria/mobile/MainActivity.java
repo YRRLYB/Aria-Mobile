@@ -44,7 +44,9 @@ public class MainActivity extends BridgeActivity {
             WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
             ViewCompat.setOnApplyWindowInsetsListener(getBridge().getWebView(), (view, windowInsets) -> {
                 applySafeAreaInsets(windowInsets);
-                return WindowInsetsCompat.CONSUMED;
+                // Pass through: consuming here zeroes the insets for every
+                // later read (getRootWindowInsets), which broke the re-pushes.
+                return windowInsets;
             });
             // The first inset callback can fire before the WebView document
             // exists, losing the CSS variables. Re-push a few times after
@@ -77,12 +79,11 @@ public class MainActivity extends BridgeActivity {
 
     private void pushCurrentInsets() {
         if (getBridge() == null || getBridge().getWebView() == null) return;
-        android.view.View view = getBridge().getWebView();
-        // On the first resume the WebView is not attached to a window yet and
-        // getRootWindowInsets() returns null — skip; the inset listener and
-        // the later re-pushes cover it once attachment happens.
-        if (!view.isAttachedToWindow()) return;
-        android.view.WindowInsets rootInsets = view.getRootWindowInsets();
+        // The decor view always carries the real window insets (the WebView's
+        // own value can be nulled/consumed early in the lifecycle).
+        android.view.View decor = getWindow().getDecorView();
+        if (!decor.isAttachedToWindow()) return;
+        android.view.WindowInsets rootInsets = decor.getRootWindowInsets();
         if (rootInsets == null) return;
         androidx.core.graphics.Insets insets = androidx.core.view.WindowInsetsCompat
                 .toWindowInsetsCompat(rootInsets)
@@ -100,11 +101,19 @@ public class MainActivity extends BridgeActivity {
                 androidx.core.graphics.Insets.of(top.top, top.left, top.right, bottom.bottom));
     }
 
+    // Last known-good values: some ROM re-dispatches report a full zero
+    // reset mid-lifecycle; a zero write must never clobber a good value.
+    private static int lastGoodSafeTop = 0;
+    private static int lastGoodSafeBottom = 0;
+
     /** Insets arrive in physical pixels; CSS needs density-independent px. */
     private void writeSafeAreaVars(androidx.core.graphics.Insets insets) {
+        if (insets.top == 0 && insets.bottom == 0 && (lastGoodSafeTop > 0 || lastGoodSafeBottom > 0)) return;
         float density = getBridge().getWebView().getResources().getDisplayMetrics().density;
         int topCss = Math.round(insets.top / density);
         int bottomCss = Math.round(insets.bottom / density);
+        lastGoodSafeTop = topCss;
+        lastGoodSafeBottom = bottomCss;
         String script = "window.__ariaSafeTop=" + topCss + ";window.__ariaSafeBottom=" + bottomCss + ";"
                 + "document.documentElement.style.setProperty('--aria-safe-top','" + topCss + "px');"
                 + "document.documentElement.style.setProperty('--aria-safe-bottom','" + bottomCss + "px');"

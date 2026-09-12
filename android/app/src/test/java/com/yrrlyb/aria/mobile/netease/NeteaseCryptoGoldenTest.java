@@ -58,6 +58,20 @@ public class NeteaseCryptoGoldenTest {
     }
 
     @Test
+    public void rsa_output_always_keyLength_even_when_highBitSet() {
+        // Random secrets whose RSA result has the top bit set used to crash
+        // with ArrayIndexOutOfBounds (129 bytes into a 128-byte buffer).
+        String base62 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        java.util.Random random = new java.util.Random(42);
+        for (int i = 0; i < 200; i++) {
+            StringBuilder secret = new StringBuilder(16);
+            for (int j = 0; j < 16; j++) secret.append(base62.charAt(random.nextInt(62)));
+            String hex = NeteaseCrypto.rsaNoPadHex(new StringBuilder(secret).reverse().toString());
+            assertEquals("secret " + secret + " produced " + hex.length() + " chars", 256, hex.length());
+        }
+    }
+
+    @Test
     public void eapi_matchesNode() {
         String url = "/api/v1/album";
         NeteaseCrypto.EapiParams params = NeteaseCrypto.eapi(url, TEXT);

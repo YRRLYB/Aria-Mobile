@@ -37,6 +37,7 @@ import {
   registerDirectProvider,
   resolveDirectStreamUrl,
 } from "./native/neteaseDirect";
+import { applySafeAreasFromNative } from "./native/ariaShell";
 import { MiniPlayer, TabBar } from "./Chrome";
 import { HomeScreen, LibraryScreen, SearchScreen, SettingsScreen } from "./screens";
 import { NowPlaying } from "./NowPlaying";
@@ -474,6 +475,21 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
   const currentTime = usePlaybackTime();
   const nativeAudio = useMemo(() => isNativeApp(), []);
+
+  // Active safe-area pull: MIUI-style ROMs may report zero insets during the
+  // passive listener window; pull real values once the page is interactive.
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    const timer = window.setTimeout(() => void applySafeAreasFromNative(), 1200);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void applySafeAreasFromNative();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   // Hardware/gesture back: step back inside the app instead of exiting.
   useEffect(() => {

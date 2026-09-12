@@ -83,12 +83,21 @@ public final class NeteaseCrypto {
             RSAPublicKey publicKey = (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(der));
             BigInteger data = new BigInteger(1, text.getBytes(StandardCharsets.ISO_8859_1));
             byte[] signature = data.modPow(publicKey.getPublicExponent(), publicKey.getModulus()).toByteArray();
+            // BigInteger keeps a sign bit: when the top byte is >= 0x80 the
+            // array grows to 129 bytes and must be stripped back to 128
+            // (this failed ~50% of weapi calls depending on the random key).
+            if (signature.length > 1 && signature[0] == 0) {
+                byte[] stripped = new byte[signature.length - 1];
+                System.arraycopy(signature, 1, stripped, 0, stripped.length);
+                signature = stripped;
+            }
             int keyBytes = (publicKey.getModulus().bitLength() + 7) / 8;
             byte[] padded = new byte[keyBytes];
             System.arraycopy(signature, 0, padded, keyBytes - signature.length, signature.length);
             return hexLower(padded);
         } catch (Exception error) {
-            throw new IllegalStateException("netease rsa failed", error);
+            throw new IllegalStateException("netease rsa failed: " + error.getClass().getSimpleName()
+                    + " " + error.getMessage(), error);
         }
     }
 
