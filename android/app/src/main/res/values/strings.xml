@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Aria</string>
+    <string name="title_activity_main">Aria</string>
+    <string name="package_name">com.yrrlyb.aria.mobile</string>
+    <string name="custom_url_scheme">com.yrrlyb.aria.mobile</string>
+</resources>

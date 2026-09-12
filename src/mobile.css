@@ -1,0 +1,79 @@
+/* Mobile shell styles layered on top of the shared Aria visual language. */
+
+html,
+body {
+  min-width: 0;
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tab-bar {
+  box-shadow: 0 -12px 40px rgba(47, 55, 76, 0.12);
+}
+
+.tap-scale {
+  transition: transform 0.12s ease;
+}
+.tap-scale:active {
+  transform: scale(0.96);
+}
+
+/* Lyrics scrolling */
+.lyric-line-active {
+  color: rgb(23 23 23);
+  font-weight: 600;
+}
+
+/* Progress slider kept thumb-friendly on touch */
+.mobile-range {
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  width: 100%;
+}
+.mobile-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--range-color, #171717) 0%,
+    var(--range-color, #171717) calc(var(--range-value, 0) * 100%),
+    rgba(23, 23, 23, 0.12) calc(var(--range-value, 0) * 100%),
+    rgba(23, 23, 23, 0.12) 100%
+  );
+}
+.mobile-range::-webkit-slider-thumb {
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  margin-top: -6px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(23, 23, 23, 0.2);
+  box-shadow: 0 2px 8px rgba(23, 23, 23, 0.25);
+}
