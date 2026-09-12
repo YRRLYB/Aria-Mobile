@@ -19,6 +19,17 @@ public final class NeteaseClient {
     private NeteaseClient() {
     }
 
+    /** Accepts "123", "netease:123" or "direct:123" — digits only. */
+    public static long songId(org.json.JSONObject data) {
+        String raw = data.optString("id", "").replaceAll("[^0-9]", "");
+        if (raw.isEmpty()) return 0;
+        try {
+            return Long.parseLong(raw);
+        } catch (NumberFormatException error) {
+            return 0;
+        }
+    }
+
     // ---- Login (works without a session) ----
 
     /** QR key: body.data.unikey. */

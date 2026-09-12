@@ -74,7 +74,7 @@ function mapSong(song: RawSong): ProviderTrack {
     title: song.name ?? `#${song.id}`,
     artist: (song.ar ?? song.singers ?? []).map((artist) => artist.name).join(" / "),
     album: song.al?.name ?? song.album?.name ?? "",
-    duration: song.dt ?? 0,
+    duration: Math.round((song.dt ?? 0) / 1000),
     // Display tag from the strongest tier the catalog reports; the real
     // played level arrives with streamMeta after warm/play.
     quality: maxbr >= 1400_000 ? "Hi-Res" : maxbr >= 999_000 ? "Lossless" : "320K",
@@ -231,7 +231,7 @@ export async function directStreamMeta(
   trackId: string,
   level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster",
 ): Promise<DirectStreamMeta> {
-  const numeric = trackId.replace("netease:", "");
+  const numeric = trackId.replace(/^(netease:|direct:)+/, "");
   const body = await invoke<{ data?: Array<{ url?: string; br?: number; level?: string; size?: number; sr?: number }> }>(
     "songUrlV1",
     { id: numeric, level },

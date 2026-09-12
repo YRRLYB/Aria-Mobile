@@ -415,6 +415,7 @@ function QueueSheet({ controls }: { controls: MobileControls }) {
               track.id === activeTrack.id ? "bg-white/10" : "active:bg-white/[0.06]"
             }`}
           >
+            <TrackCover track={track} className="size-9 shrink-0 rounded-[0.55rem]" />
             <span className="min-w-0 flex-1">
               <span
                 className={`block truncate text-sm ${track.id === activeTrack.id ? "font-semibold text-white" : "text-white/85"}`}

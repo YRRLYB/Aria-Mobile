@@ -179,16 +179,16 @@ public class NeteaseDirectPlugin extends Plugin {
             case "userPlaylists":
                 return NeteaseClient.userPlaylists(getContext());
             case "playlistTracks":
-                return NeteaseClient.playlistTracks(getContext(), data.optLong("id", 0));
+                return NeteaseClient.playlistTracks(getContext(), NeteaseClient.songId(data));
             case "search":
                 return NeteaseClient.search(getContext(), data.optString("keyword", ""),
                         data.optInt("type", 1), data.optInt("limit", 30));
             case "lyric":
-                return NeteaseClient.lyric(getContext(), data.optLong("id", 0));
+                return NeteaseClient.lyric(getContext(), NeteaseClient.songId(data));
             case "songUrlV1":
-                return NeteaseClient.songUrlV1(getContext(), data.optLong("id", 0), data.optString("level", "lossless"));
+                return NeteaseClient.songUrlV1(getContext(), NeteaseClient.songId(data), data.optString("level", "lossless"));
             case "setLike":
-                return NeteaseClient.setLike(getContext(), data.optLong("id", 0), data.optBoolean("like", true));
+                return NeteaseClient.setLike(getContext(), NeteaseClient.songId(data), data.optBoolean("like", true));
             case "songDetail": {
                 org.json.JSONArray ids = data.optJSONArray("ids");
                 long[] parsed = new long[ids == null ? 0 : ids.length()];
@@ -196,7 +196,7 @@ public class NeteaseDirectPlugin extends Plugin {
                 return NeteaseClient.songDetail(getContext(), parsed);
             }
             case "artistTopSongs":
-                return NeteaseClient.artistTopSongs(getContext(), data.optLong("id", 0));
+                return NeteaseClient.artistTopSongs(getContext(), NeteaseClient.songId(data));
             default:
                 throw new NeteaseHttp.NeteaseException(400, "unknown endpoint: " + endpoint);
         }

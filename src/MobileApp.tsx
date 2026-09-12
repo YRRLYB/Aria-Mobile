@@ -772,6 +772,19 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     writePlayHistory(playHistory);
   }, [playHistory]);
   useEffect(() => {
+    if (!dailyTracks.length && !roamTracks.length && !neteaseLikedTracks.length) return;
+    try {
+      localStorage.setItem("aria-pools-cache", JSON.stringify({
+        daily: dailyTracks.slice(0, 60).map(createPlayerCacheSnapshot),
+        roam: roamTracks.slice(0, 60).map(createPlayerCacheSnapshot),
+        liked: neteaseLikedTracks.slice(0, 200).map(createPlayerCacheSnapshot),
+        playlists: providerPlaylists.slice(0, 50),
+      }));
+    } catch {
+      // quota exceeded: pools are recomputable
+    }
+  }, [dailyTracks, roamTracks, neteaseLikedTracks, providerPlaylists]);
+  useEffect(() => {
     const settings = readCachedAudioSettings();
     writeCachedAudioSettings({
       sinkId: settings.sinkId ?? "default",
@@ -781,6 +794,25 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       outputMode: "system",
     });
   }, [hifiEnabled]);
+
+  // Seed the pools from the last successful refresh so the home screen is
+  // never empty on relaunch; the refresh below then replaces them in place.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("aria-pools-cache");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        daily?: Track[]; roam?: Track[]; liked?: Track[]; playlists?: ProviderPlaylist[];
+      };
+      if (parsed.daily?.length) netease.setDailyTracks(parsed.daily);
+      if (parsed.roam?.length) netease.setRoamTracks(parsed.roam);
+      if (parsed.liked?.length) netease.setNeteaseLikedTracks(parsed.liked);
+      if (parsed.playlists?.length) netease.setProviderPlaylists(parsed.playlists);
+    } catch {
+      // cache is best-effort
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Initial data load: account info (desktop reads /api/settings for this),
   // then netease pools. Local library loads inside its own hook. Runs ONCE —

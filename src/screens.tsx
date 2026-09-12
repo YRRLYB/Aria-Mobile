@@ -51,13 +51,13 @@ export function TrackRow({
 }) {
   return (
     <div
-      className={`tap-scale flex items-center gap-3 rounded-[0.9rem] px-2 py-2 transition ${active ? "bg-neutral-950/[0.06]" : "active:bg-neutral-950/[0.04]"}`}
+      className={`tap-scale flex items-center gap-3 rounded-[0.9rem] px-2 py-1.5 transition ${active ? "bg-neutral-950/[0.06]" : "active:bg-neutral-950/[0.04]"}`}
     >
       <button type="button" onClick={onPlay} className="flex min-w-0 flex-1 items-center gap-3 text-left">
         {typeof index === "number" ? (
           <span className="w-6 shrink-0 text-center text-xs text-neutral-400">{index + 1}</span>
         ) : null}
-        <TrackCover track={track} className="size-10 shrink-0 rounded-[0.6rem]" />
+        <TrackCover track={track} className="size-9 shrink-0 rounded-[0.55rem]" />
         <span className="min-w-0 flex-1">
           <span className={`block truncate text-sm ${active ? "font-semibold text-neutral-950" : "font-medium"}`}>
             {track.title}
@@ -234,7 +234,7 @@ export function HomeScreen(controls: MobileControls) {
         <p className="rounded-[1rem] bg-white/60 p-4 text-xs text-neutral-500">登录网易云或标记本地喜欢后,这里会出现你的音乐。</p>
       ) : (
         <div className="space-y-0.5">
-          {[...likedNeteaseTracks, ...likedLocalTracks].slice(0, 10).map((track) => (
+          {[...likedNeteaseTracks, ...likedLocalTracks].slice(0, 6).map((track) => (
             <TrackRow
               key={track.id}
               track={track}
@@ -277,7 +277,7 @@ export function HomeScreen(controls: MobileControls) {
         <>
           <SectionHeader title="最近播放" Icon={History} />
           <div className="space-y-0.5">
-            {topHistory.map((track) => (
+            {topHistory.slice(0, 6).map((track) => (
               <TrackRow
                 key={track.id}
                 track={track}
