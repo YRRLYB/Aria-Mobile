@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Compass,
   Heart,
@@ -15,6 +15,15 @@ import {
 } from "lucide-react";
 import { TrackCover } from "./Chrome";
 import { qualityOptions, type QualityLevel } from "@/lib/playerPresentation";
+import type { NeteaseAccountSummary } from "@/lib/api";
+import {
+  directAccount,
+  directLogout,
+  directQrCheck,
+  directQrStart,
+  isDirectCapable,
+  registerDirectProvider,
+} from "./native/neteaseDirect";
 import type { MobileControls } from "./MobileApp";
 
 export function TrackRow({
@@ -156,6 +165,12 @@ export function HomeScreen(controls: MobileControls) {
           </div>
         )}
       </div>
+
+      {controls.directMode && !neteaseAccount?.connected && (
+        <p className="mt-4 rounded-[1rem] border border-amber-200/70 bg-amber-50/80 p-3 text-xs leading-5 text-amber-700">
+          直连模式:到「设置 → 网易云直连」扫码登录后,即可听每日推荐、私人漫游和你的歌单。
+        </p>
+      )}
 
       {dailyTracks.length > 0 && (
         <>
@@ -548,6 +563,9 @@ export function SettingsScreen(controls: MobileControls) {
     <div className="space-y-4 pb-4">
       <h1 className="text-xl font-semibold">设置</h1>
 
+      {controls.directMode ? (
+        <DirectNeteaseCard controls={controls} />
+      ) : (
       <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -582,6 +600,7 @@ export function SettingsScreen(controls: MobileControls) {
           </div>
         </div>
       </section>
+      )}
 
       <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Audio</p>
@@ -642,5 +661,148 @@ export function SettingsScreen(controls: MobileControls) {
         Aria Mobile · 与桌面端共用曲库与账号 · 仅限局域网使用
       </p>
     </div>
+  );
+}
+
+function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
+  const [account, setAccount] = useState<NeteaseAccountSummary | null>(controls.neteaseAccount);
+  const [qr, setQr] = useState<{ key: string; qrImage: string } | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!qr) return;
+    let stopped = false;
+    const timer = window.setInterval(async () => {
+      if (stopped) return;
+      try {
+        const result = await directQrCheck(qr.key);
+        setMessage(result.message);
+        if (result.status === "success") {
+          window.clearInterval(timer);
+          setQr(null);
+          setMessage("");
+          registerDirectProvider();
+          setAccount(await directAccount());
+          controls.refreshNeteaseData();
+        }
+        if (result.status === "expired") {
+          window.clearInterval(timer);
+          setQr(null);
+          setMessage("二维码已过期,请重新获取");
+        }
+      } catch {
+        // transient network error: keep polling
+      }
+    }, 3000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+    // refreshNeteaseData is an effect-event and stays stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qr]);
+
+  async function startLogin() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const started = await directQrStart();
+      setQr({ key: started.key, qrImage: started.qrImage });
+      setMessage("打开网易云音乐 App 扫一扫");
+    } catch {
+      setMessage("获取二维码失败,请检查网络后重试");
+    }
+    setBusy(false);
+  }
+
+  async function refresh() {
+    setAccount(await directAccount());
+    controls.refreshNeteaseData();
+  }
+
+  if (!isDirectCapable()) return null;
+  const connected = Boolean(account?.connected);
+
+  return (
+    <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Account</p>
+          <h3 className="mt-1 text-base font-semibold">网易云直连</h3>
+        </div>
+        <button
+          type="button"
+          onClick={refresh}
+          className="tap-scale flex size-9 items-center justify-center rounded-full bg-white shadow-sm"
+          aria-label="刷新登录状态"
+        >
+          <RefreshCw className="size-4 text-neutral-600" />
+        </button>
+      </div>
+
+      <div className="mt-3 flex items-center gap-3 rounded-[1rem] bg-neutral-950/[0.03] p-3">
+        {connected && account?.avatarUrl ? (
+          <img src={account.avatarUrl} alt="" className="size-11 rounded-full object-cover" />
+        ) : (
+          <div className="flex size-11 items-center justify-center rounded-full bg-white shadow-sm">
+            <UserRound className="size-5 text-neutral-400" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold">
+            {connected ? account?.nickname ?? "网易云账号" : "未登录"}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-neutral-500">
+            {connected ? "手机直连网易云,不依赖电脑" : qr ? "扫码后在手机上确认" : "登录后无需电脑即可听网易云"}
+          </p>
+        </div>
+        {connected && (
+          <button
+            type="button"
+            onClick={() => {
+              directLogout();
+              setAccount({ connected: false, nickname: null, userId: null, avatarUrl: null, cookiePreview: null });
+              controls.refreshNeteaseData();
+            }}
+            className="tap-scale rounded-full bg-white px-3 py-1.5 text-xs text-rose-600 shadow-sm"
+          >
+            退出
+          </button>
+        )}
+      </div>
+
+      {!connected && (
+        <div className="mt-3 flex flex-col items-center gap-2 rounded-[1rem] bg-white/70 p-4">
+          {qr ? (
+            <>
+              <img src={qr.qrImage} alt="网易云登录二维码" className="size-44 rounded-[0.8rem]" />
+              <p className="text-xs text-neutral-500">{message || "等待扫描…"}</p>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={startLogin}
+              disabled={busy}
+              className="tap-scale rounded-full bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {busy ? "获取二维码…" : "扫码登录网易云"}
+            </button>
+          )}
+          {!qr && message && <p className="text-xs text-neutral-400">{message}</p>}
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-[1rem] bg-neutral-950/[0.03] p-3">
+        <p className="text-xs leading-5 text-neutral-500">当前为直连模式(不依赖电脑)。桌面模式可串流电脑曲库。</p>
+        <button
+          type="button"
+          onClick={controls.switchToDesktopMode}
+          className="tap-scale shrink-0 rounded-full bg-white px-3 py-1.5 text-xs text-neutral-600 shadow-sm"
+        >
+          切换桌面模式
+        </button>
+      </div>
+    </section>
   );
 }

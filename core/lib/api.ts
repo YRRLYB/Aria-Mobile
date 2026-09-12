@@ -304,6 +304,55 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+// ---- Netease direct provider hook (Aria Mobile standalone mode) ----
+// The mobile shell registers a provider backed by the on-device NetEase
+// client; when active, every netease call below routes to the device instead
+// of the desktop backend. Desktop never registers one, so this stays inert
+// there and the desktop backend path is untouched.
+export type NeteaseStreamMeta = {
+  url: string | null;
+  bitrate: number | null;
+  sampleRate: number | null;
+  size: number | null;
+  quality: ProviderTrack["quality"];
+  currentLevel: ProviderTrack["currentLevel"];
+  availableLevels: NonNullable<ProviderTrack["availableLevels"]>;
+};
+
+export type NeteaseDirectProvider = {
+  active(): boolean;
+  liked(): Promise<{ tracks: ProviderTrack[] }>;
+  daily(): Promise<ProviderDailyBundle>;
+  roam(limit: number): Promise<ProviderDailyBundle>;
+  playlists(): Promise<{ playlists: ProviderPlaylist[] }>;
+  playlistTracks(playlistId: string): Promise<{ tracks: ProviderTrack[] }>;
+  searchTracks(keyword: string, limit: number): Promise<ProviderTrack[]>;
+  searchArtists(keyword: string, limit: number): Promise<ProviderArtist[]>;
+  artistTopSongs(artistId: string): Promise<{ tracks: ProviderTrack[] }>;
+  lyrics(trackId: string): Promise<{ lyrics: LyricLine[] }>;
+  streamMeta(trackId: string, level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster"): Promise<NeteaseStreamMeta>;
+  setLike(trackId: string, liked: boolean): Promise<{ ok: boolean; liked: boolean }>;
+  warmup(trackIds: string[], level: string): Promise<{ ok: boolean; cached: number }>;
+  coverUrl(sourceUrl: string): string;
+  account(): Promise<NeteaseAccountSummary>;
+  qrStart(): Promise<NeteaseQrStart>;
+  qrCheck(key: string): Promise<NeteaseQrCheck>;
+};
+
+let neteaseDirectProvider: NeteaseDirectProvider | null = null;
+
+export function registerNeteaseDirectProvider(provider: NeteaseDirectProvider | null) {
+  neteaseDirectProvider = provider;
+}
+
+function neteaseDirect(): NeteaseDirectProvider | null {
+  try {
+    return neteaseDirectProvider?.active() ? neteaseDirectProvider : null;
+  } catch {
+    return null;
+  }
+}
+
 export const api = {
   resolveUrl(url: string) {
     return apiUrl(url);
@@ -369,6 +418,7 @@ export const api = {
     });
   },
   getNeteaseCoverUrl(sourceUrl: string) {
+    if (neteaseDirect()) return sourceUrl;
     return apiUrl(`/api/providers/netease/cover?url=${encodeURIComponent(sourceUrl)}`);
   },
   searchLyrics(query: { title: string; artist?: string; album?: string }) {
@@ -389,6 +439,14 @@ export const api = {
     });
   },
   getSettings() {
+    const directProvider = neteaseDirect();
+    if (directProvider) {
+      return directProvider.account().then((neteaseAccount) => ({
+        hasNeteaseCookie: neteaseAccount.connected,
+        neteaseAccount,
+        lyricBindings: {} as Record<string, string>,
+      }));
+    }
     return request<{
       hasNeteaseCookie: boolean;
       neteaseAccount: NeteaseAccountSummary;
@@ -402,11 +460,15 @@ export const api = {
     });
   },
   startNeteaseQrLogin() {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.qrStart();
     return request<NeteaseQrStart>("/api/settings/netease-qr/start", {
       method: "POST",
     });
   },
   checkNeteaseQrLogin(key: string) {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.qrCheck(key);
     const params = new URLSearchParams({ key });
     return request<NeteaseQrCheck>(`/api/settings/netease-qr/check?${params}`);
   },
@@ -425,30 +487,54 @@ export const api = {
     }>("/api/providers");
   },
   getProviderLiked(providerId = "netease") {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.liked();
     return request<{ tracks: ProviderTrack[] }>(`/api/providers/${providerId}/liked`);
   },
   setNeteaseLike(trackId: string, liked: boolean) {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.setLike(trackId, liked);
     return request<{ ok: boolean; liked: boolean }>(`/api/providers/netease/tracks/${encodeURIComponent(trackId)}/like`, {
       method: "POST",
       body: JSON.stringify({ liked }),
     });
   },
   getProviderPlaylists(providerId = "netease") {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.playlists();
     return request<{ playlists: ProviderPlaylist[] }>(`/api/providers/${providerId}/playlists`);
   },
   getNeteasePlaylistTracks(playlistId: string) {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.playlistTracks(playlistId);
     return request<{ tracks: ProviderTrack[] }>(`/api/providers/netease/playlists/${encodeURIComponent(playlistId)}/tracks`);
   },
   getProviderDaily(providerId = "netease") {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.daily();
     return request<ProviderDailyBundle>(`/api/providers/${providerId}/daily`);
   },
   getProviderRoam(providerId = "netease", limit = 18, options: { refresh?: boolean; excludeIds?: string[] } = {}) {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.roam(limit);
     const params = new URLSearchParams({ limit: String(limit) });
     if (options.refresh) params.set("refresh", "1");
     if (options.excludeIds?.length) params.set("exclude", options.excludeIds.join(","));
     return request<ProviderDailyBundle>(`/api/providers/${providerId}/roam?${params}`);
   },
   searchLibraryAndStream(query: string, limit = 24) {
+    const directProvider = neteaseDirect();
+    if (directProvider) {
+      return Promise.all([
+        directProvider.searchTracks(query, limit),
+        directProvider.searchArtists(query, Math.min(limit, 18)),
+      ]).then(([neteaseTracks, artists]) => ({
+        query,
+        localTracks: [] as ApiScannedTrack[],
+        neteaseTracks,
+        artists,
+      }));
+    }
     const params = new URLSearchParams({ q: query, limit: String(limit) });
     return request<{
       query: string;
@@ -458,18 +544,28 @@ export const api = {
     }>(`/api/search?${params}`);
   },
   lookupArtist(name: string) {
+    const directProvider = neteaseDirect();
+    if (directProvider) {
+      return directProvider.searchArtists(name, 1).then((artists) => ({ artist: artists[0] ?? null }));
+    }
     const params = new URLSearchParams({ name });
     return request<{ artist: ProviderArtist | null }>(`/api/artists/lookup?${params}`);
   },
   getNeteaseArtistTracks(artistId: string) {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.artistTopSongs(artistId);
     return request<{ tracks: ProviderTrack[] }>(`/api/providers/netease/artists/${encodeURIComponent(artistId)}/tracks`);
   },
   getNeteaseLyrics(trackId: string) {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.lyrics(trackId);
     return request<{ lyrics: LyricLine[] }>(
       `/api/providers/netease/tracks/${encodeURIComponent(trackId)}/lyrics`,
     );
   },
   getNeteaseStreamMeta(trackId: string, level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster") {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.streamMeta(trackId, level);
     const params = new URLSearchParams({ level });
     return request<{
       url: string | null;
@@ -482,6 +578,8 @@ export const api = {
     }>(`/api/providers/netease/tracks/${encodeURIComponent(trackId)}/stream-meta?${params}`);
   },
   warmNeteaseCache(trackIds: string[], level = "lossless") {
+    const directProvider = neteaseDirect();
+    if (directProvider) return directProvider.warmup(trackIds, level);
     return request<{ ok: boolean; cached: number }>("/api/providers/netease/cache/warmup", {
       method: "POST",
       body: JSON.stringify({ trackIds, level }),

@@ -27,6 +27,15 @@ import { useDiscovery, type SearchBundle } from "@/hooks/useDiscovery";
 import { ConnectScreen } from "./ConnectScreen";
 import { clearConnection, readConnection, verifyConnection } from "./connection";
 import { AriaAudio, isNativeApp, setStatusBarIconsLight, type AriaAudioEvent } from "./native/ariaAudio";
+import {
+  disableDirectMode,
+  enableDirectMode,
+  getDataMode,
+  initDirectMode,
+  isDirectCapable,
+  registerDirectProvider,
+  resolveDirectStreamUrl,
+} from "./native/neteaseDirect";
 import { MiniPlayer, TabBar } from "./Chrome";
 import { HomeScreen, LibraryScreen, SearchScreen, SettingsScreen } from "./screens";
 import { NowPlaying } from "./NowPlaying";
@@ -38,6 +47,7 @@ export type RepeatMode = "all" | "one";
 export type TrackUpdateOptions = { includeHistory?: boolean };
 
 export type MobileControls = {
+  directMode: boolean;
   activeTrack: Track;
   activeTrackId: string;
   playing: boolean;
@@ -90,6 +100,7 @@ export type MobileControls = {
   setQualityLevel: (level: QualityLevel) => void;
   openNowPlaying: () => void;
   disconnect: () => void;
+  switchToDesktopMode: () => void;
 };
 
 export function MobileApp() {
@@ -98,12 +109,19 @@ export function MobileApp() {
 
   useEffect(() => {
     let mounted = true;
-    const connection = readConnection();
-    if (!connection.serverUrl) {
-      setGate("unconfigured");
-      return;
-    }
-    verifyConnection(connection.serverUrl, connection.token).then((result) => {
+    (async () => {
+      if (isNativeApp() && getDataMode() === "direct") {
+        const loggedIn = await initDirectMode();
+        if (!mounted) return;
+        setGate(loggedIn ? "ready" : "unconfigured");
+        return;
+      }
+      const connection = readConnection();
+      if (!connection.serverUrl) {
+        setGate("unconfigured");
+        return;
+      }
+      const result = await verifyConnection(connection.serverUrl, connection.token);
       if (!mounted) return;
       if (result.ok) {
         setGate("ready");
@@ -111,7 +129,7 @@ export function MobileApp() {
         setGateError(result.reason);
         setGate("unconfigured");
       }
-    });
+    })();
     return () => {
       mounted = false;
     };
@@ -146,6 +164,11 @@ export function MobileApp() {
 function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   const cachedState = useMemo(() => readCachedPlayerState(), []);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const directMode = isNativeApp() && getDataMode() === "direct";
+
+  useEffect(() => {
+    if (directMode) registerDirectProvider();
+  }, [directMode]);
 
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
@@ -222,6 +245,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     selectedPlaylist,
     playlistLoading,
     neteaseLikedIds,
+    applyStreamMetaToTrack,
     warmNeteaseTrackCache,
     refreshNeteaseData,
     refreshRoamData,
@@ -471,16 +495,44 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     lastNativeLoadRef.current = { key: loadKey, at: Date.now() };
     resetPlaybackTime();
     setDurationSeconds(0);
-    void AriaAudio.load({
-      url: playbackStreamUrl(activeTrack, hifiEnabled, qualityLevel) ?? activeTrack.streamUrl,
-      trackId: activeTrack.id,
-      title: activeTrack.title,
-      artist: activeTrack.artist,
-      album: activeTrack.album,
-      artworkUrl: activeTrack.coverUrl ?? (activeTrack.cover.startsWith("http") ? activeTrack.cover : undefined),
-      paused: !playing,
-      volume: Math.min(1, Math.max(0, volume / 100)),
-    }).catch(() => setPlaying(false));
+    let cancelled = false;
+    void (async () => {
+      let url: string = playbackStreamUrl(activeTrack, hifiEnabled, qualityLevel) ?? activeTrack.streamUrl ?? "";
+      // Direct mode sentinel: resolve the real CDN url through songUrlV1.
+      if (url.startsWith("direct:")) {
+        const meta = await resolveDirectStreamUrl(activeTrack.id, targetLevelFor(activeTrack, hifiEnabled, qualityLevel));
+        if (cancelled) return;
+        if (!meta?.url) {
+          setPlaying(false);
+          return;
+        }
+        applyTrackUpdate(activeTrack.id, (track) => ({
+          ...track,
+          streamUrl: meta.url ?? undefined,
+          bitrate: meta.bitrate ?? track.bitrate,
+          sampleRate: meta.sampleRate ?? track.sampleRate,
+          quality: meta.quality ?? track.quality,
+          currentLevel: meta.currentLevel ?? track.currentLevel,
+          availableLevels: meta.availableLevels ?? track.availableLevels,
+        }));
+        url = meta.url;
+      }
+      if (cancelled) return;
+      const loadUrl: string = url;
+      await AriaAudio.load({
+        url: loadUrl,
+        trackId: activeTrack.id,
+        title: activeTrack.title,
+        artist: activeTrack.artist,
+        album: activeTrack.album,
+        artworkUrl: activeTrack.coverUrl ?? (activeTrack.cover.startsWith("http") ? activeTrack.cover : undefined),
+        paused: !playing,
+        volume: Math.min(1, Math.max(0, volume / 100)),
+      }).catch(() => setPlaying(false));
+    })();
+    return () => {
+      cancelled = true;
+    };
     // `playing`/`volume` intentionally read once here; dedicated effects sync
     // later changes so a track switch does not restart playback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -692,6 +744,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   const historyTracks = useMemo(() => playHistory.map((entry) => entry.track), [playHistory]);
 
   const controls: MobileControls = {
+    directMode,
     activeTrack,
     activeTrackId,
     playing,
@@ -744,6 +797,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     setQualityLevel,
     openNowPlaying: () => setNowPlayingOpen(true),
     disconnect: onDisconnect,
+    switchToDesktopMode: () => {
+      disableDirectMode();
+      onDisconnect();
+    },
   };
 
   return (
@@ -779,16 +836,21 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   );
 }
 
+function targetLevelFor(track: Track, hifi: boolean, level: QualityLevel): QualityLevel {
+  const levels = track.availableLevels ?? [];
+  return hifi ? (levels[levels.length - 1] ?? level) : level;
+}
+
 // Lossless pipeline: the stream route defaults to lossless server-side, and
 // the level query parameter selects the tier the user picked (HiFi takes the
 // highest tier the track actually offers). Applies on the next track load.
 function playbackStreamUrl(track: Track, hifi: boolean, level: QualityLevel): string | undefined {
   if (!track.streamUrl) return undefined;
   if (track.source !== "netease") return track.streamUrl;
-  const levels = track.availableLevels ?? [];
-  const target = hifi ? (levels[levels.length - 1] ?? level) : level;
+  // Direct-mode sentinel: resolved against songUrlV1 at load time.
+  if (track.streamUrl.startsWith("direct:")) return track.streamUrl;
   const separator = track.streamUrl.includes("?") ? "&" : "?";
-  return `${track.streamUrl}${separator}level=${target}`;
+  return `${track.streamUrl}${separator}level=${targetLevelFor(track, hifi, level)}`;
 }
 
 function StatusBarIconsSync({ light }: { light: boolean }) {

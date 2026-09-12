@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AriaAudioPlugin.class);
         registerPlugin(AriaShellPlugin.class);
+        registerPlugin(com.yrrlyb.aria.mobile.netease.NeteaseDirectPlugin.class);
         super.onCreate(savedInstanceState);
 
         // True immersive layout: pages paint behind the status bar / gesture

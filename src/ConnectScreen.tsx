@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, Loader2, Server, Smartphone } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Server, Smartphone, Wifi } from "lucide-react";
+import { enableDirectMode, isDirectCapable } from "./native/neteaseDirect";
 import { parsePairingPayload, readConnection, saveConnection, verifyConnection } from "./connection";
 
 // Pairing gate shown until the phone has a working link to a desktop Aria.
@@ -22,6 +23,14 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
       return;
     }
     setStatus(result.reason === "unauthorized" ? "unauthorized" : "unreachable");
+  }
+
+  async function useDirectMode() {
+    setStatus("connecting");
+    const loggedIn = await enableDirectMode();
+    setStatus("ok");
+    onConnected();
+    if (!loggedIn) setPasteHint("直连模式已开启:到 设置 → 网易云直连 里扫码登录");
   }
 
   async function readClipboardPairing() {
@@ -93,6 +102,17 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
             >
               已复制桌面端二维码内容?点此自动填入
             </button>
+            {isDirectCapable() && (
+              <button
+                type="button"
+                disabled={status === "connecting"}
+                onClick={useDirectMode}
+                className="tap-scale flex w-full items-center justify-center gap-2 rounded-[0.9rem] border border-neutral-950/10 bg-white/70 px-3 py-2.5 text-xs font-medium text-neutral-600 transition disabled:opacity-50"
+              >
+                <Wifi className="size-3.5" />
+                不用电脑,直接听网易云(直连模式)
+              </button>
+            )}
             {pasteHint && <p className="text-xs text-amber-600">{pasteHint}</p>}
 
             <button
