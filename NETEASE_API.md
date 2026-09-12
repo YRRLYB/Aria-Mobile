@@ -55,7 +55,8 @@ console.log(forge.util.bytesToHex(rsa.encrypt(secret.split('').reverse().join(''
 
 ## M2 端点清单(一个接口一个方法,完成打勾)
 
-- [ ] `loginQrKey()` → key(weapi)
+- [x] `loginQrKey()` → key(eapi /api/login/qrcode/unikey)
+- [x] `loginCellphone(phone, password, countryCode)` → weapi /api/w/login/cellphone,密码 MD5;**登录凭据在 Set-Cookie 响应头**,必须用 `NeteaseHttp.cookieFromLastResponse()` 捕获
 - [ ] `loginQrCreate(key)` → 二维码图
 - [ ] `loginQrCheck(key)` → 800/801/802/803,MUSIC_U 在 803 的 cookie 里
 - [ ] `userAccount(cookie)` → userId/昵称/头像

@@ -45,6 +45,8 @@ public final class NeteaseHttp {
 
     private static final ConcurrentHashMap<String, CacheEntry> CACHE = new ConcurrentHashMap<>();
     private static final SecureRandom RANDOM = new SecureRandom();
+    // Set-Cookie lines from the most recent request (single executor thread).
+    private static volatile java.util.List<String> lastSetCookies = java.util.List.of();
 
     public static class NeteaseException extends Exception {
         public final int code;
@@ -129,6 +131,28 @@ public final class NeteaseHttp {
         return post(url, body, headers);
     }
 
+    /** Raw Set-Cookie lines from the last request (login flows need them). */
+    public static java.util.List<String> lastSetCookies() {
+        return lastSetCookies;
+    }
+
+    /**
+     * Builds a cookie string from the last response's Set-Cookie lines,
+     * keeping only real name=value pairs (drops Path/Domain/Expires attrs).
+     */
+    public static String cookieFromLastResponse() {
+        StringBuilder out = new StringBuilder();
+        for (String setCookie : lastSetCookies) {
+            String pair = setCookie.split(";", 2)[0].trim();
+            if (!pair.contains("=")) continue;
+            String name = pair.substring(0, pair.indexOf('=')).trim();
+            if (name.isEmpty()) continue;
+            if (out.length() > 0) out.append("; ");
+            out.append(pair);
+        }
+        return out.toString();
+    }
+
     private static JSONObject post(String url, String body, Map<String, String> headers) throws NeteaseException {
         HttpURLConnection connection = null;
         try {
@@ -146,6 +170,8 @@ public final class NeteaseHttp {
                 out.write(payload);
             }
 
+            java.util.List<String> setCookies = connection.getHeaderFields().get("Set-Cookie");
+            lastSetCookies = setCookies == null ? java.util.List.of() : setCookies;
             int status = connection.getResponseCode();
             InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
             String text = readAll(stream);

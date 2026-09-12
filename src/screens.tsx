@@ -18,6 +18,7 @@ import { qualityOptions, type QualityLevel } from "@/lib/playerPresentation";
 import type { NeteaseAccountSummary } from "@/lib/api";
 import {
   directAccount,
+  directCellphoneLogin,
   directLogout,
   directQrCheck,
   directQrStart,
@@ -669,6 +670,42 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
   const [qr, setQr] = useState<{ key: string; qrImage: string } | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [countryCode, setCountryCode] = useState("86");
+  const [formError, setFormError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  async function submitPasswordLogin(event: React.FormEvent) {
+    event.preventDefault();
+    if (!phone.trim() || !password || loggingIn) return;
+    setLoggingIn(true);
+    setFormError("");
+    const result = await directCellphoneLogin(phone.trim(), password, countryCode.trim() || "86");
+    setLoggingIn(false);
+    if (result.ok) {
+      setPassword("");
+      registerDirectProvider();
+      setAccount(await directAccount());
+      setMessage("登录成功");
+      controls.refreshNeteaseData();
+    } else {
+      setFormError(result.message || `登录失败(${result.code})`);
+    }
+  }
+
+  async function startQrLogin() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const started = await directQrStart();
+      setQr({ key: started.key, qrImage: started.qrImage });
+      setMessage("网易云音乐 App → 扫一扫,对准此二维码");
+    } catch {
+      setMessage("获取二维码失败,请检查网络后重试");
+    }
+    setBusy(false);
+  }
 
   useEffect(() => {
     if (!qr) return;
@@ -702,19 +739,6 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
     // refreshNeteaseData is an effect-event and stays stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qr]);
-
-  async function startLogin() {
-    setBusy(true);
-    setMessage("");
-    try {
-      const started = await directQrStart();
-      setQr({ key: started.key, qrImage: started.qrImage });
-      setMessage("打开网易云音乐 App 扫一扫");
-    } catch {
-      setMessage("获取二维码失败,请检查网络后重试");
-    }
-    setBusy(false);
-  }
 
   async function refresh() {
     setAccount(await directAccount());
@@ -773,23 +797,64 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
       </div>
 
       {!connected && (
-        <div className="mt-3 flex flex-col items-center gap-2 rounded-[1rem] bg-white/70 p-4">
+        <div className="mt-3 rounded-[1rem] bg-white/70 p-4">
           {qr ? (
-            <>
+            <div className="flex flex-col items-center gap-2">
               <img src={qr.qrImage} alt="网易云登录二维码" className="size-44 rounded-[0.8rem]" />
-              <p className="text-xs text-neutral-500">{message || "等待扫描…"}</p>
-            </>
+              <p className="text-center text-xs text-neutral-500">
+                {message || "等待扫描…"}
+                <br />
+                <span className="text-neutral-400">本机打开网易云 App → 扫一扫,对准此码即可</span>
+              </p>
+              <button type="button" onClick={() => setQr(null)} className="text-xs text-neutral-400 underline">
+                返回账号密码登录
+              </button>
+            </div>
           ) : (
-            <button
-              type="button"
-              onClick={startLogin}
-              disabled={busy}
-              className="tap-scale rounded-full bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-            >
-              {busy ? "获取二维码…" : "扫码登录网易云"}
-            </button>
+            <form onSubmit={submitPasswordLogin} className="space-y-2.5">
+              <div className="flex gap-2">
+                <input
+                  value={countryCode}
+                  onChange={(event) => setCountryCode(event.target.value)}
+                  inputMode="numeric"
+                  aria-label="区号"
+                  className="w-16 rounded-[0.8rem] border border-neutral-950/10 px-2.5 py-2.5 text-sm outline-none focus:border-neutral-950/40"
+                />
+                <input
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  placeholder="网易云手机号"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  className="min-w-0 flex-1 rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
+                />
+              </div>
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="网易云密码"
+                type="password"
+                autoComplete="current-password"
+                className="w-full rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
+              />
+              {formError && <p className="text-xs text-rose-600">{formError}</p>}
+              <button
+                type="submit"
+                disabled={loggingIn || !phone.trim() || !password}
+                className="tap-scale w-full rounded-[0.9rem] bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {loggingIn ? "登录中…" : "登录"}
+              </button>
+              <button
+                type="button"
+                onClick={startQrLogin}
+                disabled={busy}
+                className="w-full rounded-[0.9rem] bg-neutral-950/[0.04] px-3 py-2.5 text-xs text-neutral-500 transition disabled:opacity-50"
+              >
+                {busy ? "获取二维码…" : "没有密码?改用二维码登录(网易云 App 扫码)"}
+              </button>
+            </form>
           )}
-          {!qr && message && <p className="text-xs text-neutral-400">{message}</p>}
         </div>
       )}
 

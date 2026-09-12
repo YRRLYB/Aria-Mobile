@@ -79,6 +79,34 @@ public class NeteaseDirectPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void loginCellphone(PluginCall call) {
+        String phone = call.getString("phone", "");
+        String password = call.getString("password", "");
+        String countryCode = call.getString("countryCode", "86");
+        if (phone.isEmpty() || password.isEmpty()) {
+            call.reject("手机号和密码不能为空");
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                JSONObject body = NeteaseClient.loginCellphone(getContext(), phone, password, countryCode);
+                int code = body.optInt("code", 0);
+                JSObject result = new JSObject();
+                result.put("ok", code == 200);
+                result.put("code", code);
+                result.put("message", code == 200 ? "登录成功" : body.optString("message", body.optString("msg", "登录失败(" + code + ")")));
+                if (code == 200) {
+                    result.put("nickname", NeteaseSession.nickname(getContext()));
+                    result.put("avatarUrl", NeteaseSession.avatarUrl(getContext()));
+                }
+                call.resolve(result);
+            } catch (Exception error) {
+                call.reject("登录失败", String.valueOf(error.getMessage()));
+            }
+        });
+    }
+
+    @PluginMethod
     public void logout(PluginCall call) {
         NeteaseClient.logout(getContext());
         call.resolve();

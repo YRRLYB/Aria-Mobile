@@ -124,7 +124,8 @@ public final class NeteaseCrypto {
         return new EapiParams(aesEcbHex(data, EAPI_KEY));
     }
 
-    private static String md5Hex(String text) {
+    /** Lowercase hex MD5 (used for cellphone login passwords). */
+    public static String md5Hex(String text) {
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
             return hexLower(md.digest(text.getBytes(StandardCharsets.UTF_8)));

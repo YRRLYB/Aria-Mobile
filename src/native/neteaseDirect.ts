@@ -20,6 +20,9 @@ const NeteaseDirectPlugin = registerPlugin<{
   status(): Promise<{ loggedIn: boolean; userId: number; nickname: string; avatarUrl: string }>;
   loginQrStart(): Promise<{ ok: boolean; key: string; qrUrl: string }>;
   loginQrCheck(options: { key: string }): Promise<{ code: number; loggedIn: boolean; nickname?: string; avatarUrl?: string }>;
+  loginCellphone(options: { phone: string; password: string; countryCode?: string }): Promise<{
+    ok: boolean; code: number; message: string; nickname?: string; avatarUrl?: string;
+  }>;
   logout(): Promise<void>;
   invoke(options: { endpoint: string; data?: string }): Promise<InvokeResult>;
 }>("NeteaseDirect");
@@ -182,6 +185,16 @@ export async function directQrCheck(key: string): Promise<NeteaseQrCheck> {
       ? { connected: true, nickname: result.nickname ?? null, userId: null, avatarUrl: result.avatarUrl ?? null, cookiePreview: "本机会话 · 直连" }
       : null,
   };
+}
+
+export async function directCellphoneLogin(
+  phone: string,
+  password: string,
+  countryCode = "86",
+): Promise<{ ok: boolean; code: number; message: string }> {
+  const result = await NeteaseDirectPlugin.loginCellphone({ phone, password, countryCode });
+  if (result.ok) directActive = true;
+  return result;
 }
 
 export function directLogout(): void {

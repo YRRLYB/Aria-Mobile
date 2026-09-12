@@ -51,9 +51,12 @@ public final class NeteaseClient {
         JSONObject body = NeteaseHttp.request(context, "/api/login/qrcode/client/login", data, "eapi");
         int code = body.optInt("code", 801);
         if (code == 803) {
-            // The QR response carries the full cookie string ("cookies" in
-            // body or the raw Set-Cookie list); keep whatever authenticates.
-            String cookie = body.optString("cookie", "");
+            // The credential lives in the response Set-Cookie headers (the
+            // Node module reads result.cookie exactly like this).
+            String cookie = NeteaseHttp.cookieFromLastResponse();
+            if (cookie.isEmpty()) {
+                cookie = body.optString("cookie", "");
+            }
             if (cookie.isEmpty()) {
                 cookie = cookieFromJsonArray(body.optJSONArray("cookies"));
             }
@@ -85,6 +88,43 @@ public final class NeteaseClient {
             out.append(name).append('=').append(value);
         }
         return out.toString();
+    }
+
+    /**
+     * Phone-number + password login (weapi /api/w/login/cellphone). The
+     * password is MD5-digested here; the raw value is never stored. Returns
+     * the raw body so callers can surface code/message.
+     */
+    public static JSONObject loginCellphone(Context context, String phone, String password, String countryCode)
+            throws NeteaseHttp.NeteaseException {
+        JSONObject data;
+        try {
+            data = new JSONObject()
+                    .put("type", "1")
+                    .put("https", "true")
+                    .put("phone", phone)
+                    .put("countrycode", countryCode == null || countryCode.isEmpty() ? "86" : countryCode)
+                    .put("password", NeteaseCrypto.md5Hex(password))
+                    .put("remember", "true");
+        } catch (JSONException error) {
+            throw new NeteaseHttp.NeteaseException(500, "loginCellphone build failed");
+        }
+        JSONObject body = NeteaseHttp.request(context, "/api/w/login/cellphone", data, "weapi");
+        if (body.optInt("code", 0) == 200) {
+            String cookie = NeteaseHttp.cookieFromLastResponse();
+            long userId = 0;
+            String nickname = "";
+            String avatar = "";
+            JSONObject account = body.optJSONObject("account");
+            if (account != null) userId = account.optLong("id", 0);
+            JSONObject profile = body.optJSONObject("profile");
+            if (profile != null) {
+                nickname = profile.optString("nickname", "");
+                avatar = profile.optString("avatarUrl", "");
+            }
+            NeteaseSession.save(context, cookie, userId, nickname, avatar);
+        }
+        return body;
     }
 
     public static void logout(Context context) {
