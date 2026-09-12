@@ -20,9 +20,10 @@ const NeteaseDirectPlugin = registerPlugin<{
   status(): Promise<{ loggedIn: boolean; userId: number; nickname: string; avatarUrl: string }>;
   loginQrStart(): Promise<{ ok: boolean; key: string; qrUrl: string }>;
   loginQrCheck(options: { key: string }): Promise<{ code: number; loggedIn: boolean; nickname?: string; avatarUrl?: string }>;
-  loginCellphone(options: { phone: string; password: string; countryCode?: string }): Promise<{
+  loginCellphone(options: { phone: string; password?: string; captcha?: string; countryCode?: string }): Promise<{
     ok: boolean; code: number; message: string; nickname?: string; avatarUrl?: string;
   }>;
+  captchaSent(options: { phone: string; countryCode?: string }): Promise<{ ok: boolean; code: number; message: string }>;
   logout(): Promise<void>;
   invoke(options: { endpoint: string; data?: string }): Promise<InvokeResult>;
 }>("NeteaseDirect");
@@ -189,12 +190,16 @@ export async function directQrCheck(key: string): Promise<NeteaseQrCheck> {
 
 export async function directCellphoneLogin(
   phone: string,
-  password: string,
+  credentials: { password?: string; captcha?: string },
   countryCode = "86",
 ): Promise<{ ok: boolean; code: number; message: string }> {
-  const result = await NeteaseDirectPlugin.loginCellphone({ phone, password, countryCode });
+  const result = await NeteaseDirectPlugin.loginCellphone({ phone, ...credentials, countryCode });
   if (result.ok) directActive = true;
   return result;
+}
+
+export async function directCaptchaSent(phone: string, countryCode = "86"): Promise<{ ok: boolean; code: number; message: string }> {
+  return NeteaseDirectPlugin.captchaSent({ phone, countryCode });
 }
 
 export function directLogout(): void {

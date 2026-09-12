@@ -18,6 +18,7 @@ import { qualityOptions, type QualityLevel } from "@/lib/playerPresentation";
 import type { NeteaseAccountSummary } from "@/lib/api";
 import {
   directAccount,
+  directCaptchaSent,
   directCellphoneLogin,
   directLogout,
   directQrCheck,
@@ -672,19 +673,46 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
   const [busy, setBusy] = useState(false);
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [captcha, setCaptcha] = useState("");
   const [countryCode, setCountryCode] = useState("86");
+  const [loginMode, setLoginMode] = useState<"password" | "captcha">("captcha");
+  const [countdown, setCountdown] = useState(0);
   const [formError, setFormError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
 
-  async function submitPasswordLogin(event: React.FormEvent) {
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const timer = window.setInterval(() => setCountdown((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [countdown]);
+
+  async function sendCaptcha() {
+    if (!phone.trim() || countdown > 0) return;
+    const result = await directCaptchaSent(phone.trim(), countryCode.trim() || "86");
+    if (result.ok) {
+      setCountdown(60);
+      setFormError("");
+    } else {
+      setFormError(result.message || `发送失败(${result.code})`);
+    }
+  }
+
+  async function submitLogin(event: React.FormEvent) {
     event.preventDefault();
-    if (!phone.trim() || !password || loggingIn) return;
+    if (!phone.trim() || loggingIn) return;
+    if (loginMode === "password" && !password) return;
+    if (loginMode === "captcha" && !captcha.trim()) return;
     setLoggingIn(true);
     setFormError("");
-    const result = await directCellphoneLogin(phone.trim(), password, countryCode.trim() || "86");
+    const result = await directCellphoneLogin(
+      phone.trim(),
+      loginMode === "password" ? { password } : { captcha: captcha.trim() },
+      countryCode.trim() || "86",
+    );
     setLoggingIn(false);
     if (result.ok) {
       setPassword("");
+      setCaptcha("");
       registerDirectProvider();
       setAccount(await directAccount());
       setMessage("登录成功");
@@ -811,7 +839,26 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
               </button>
             </div>
           ) : (
-            <form onSubmit={submitPasswordLogin} className="space-y-2.5">
+            <form onSubmit={submitLogin} className="space-y-2.5">
+              <div className="grid grid-cols-2 gap-1 rounded-[0.9rem] bg-neutral-950/[0.05] p-1">
+                {(
+                  [
+                    { id: "captcha" as const, label: "验证码登录" },
+                    { id: "password" as const, label: "密码登录" },
+                  ]
+                ).map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setLoginMode(id)}
+                    className={`rounded-[0.7rem] py-2 text-xs font-medium transition ${
+                      loginMode === id ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="flex gap-2">
                 <input
                   value={countryCode}
@@ -829,18 +876,38 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
                   className="min-w-0 flex-1 rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
                 />
               </div>
-              <input
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="网易云密码"
-                type="password"
-                autoComplete="current-password"
-                className="w-full rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
-              />
+              {loginMode === "password" ? (
+                <input
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="网易云密码"
+                  type="password"
+                  autoComplete="current-password"
+                  className="w-full rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
+                />
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={captcha}
+                    onChange={(event) => setCaptcha(event.target.value)}
+                    placeholder="短信验证码"
+                    inputMode="numeric"
+                    className="min-w-0 flex-1 rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={sendCaptcha}
+                    disabled={!phone.trim() || countdown > 0}
+                    className="shrink-0 rounded-[0.8rem] bg-neutral-950/[0.06] px-3 text-xs font-medium text-neutral-700 disabled:opacity-50"
+                  >
+                    {countdown > 0 ? `${countdown}s` : "发送验证码"}
+                  </button>
+                </div>
+              )}
               {formError && <p className="text-xs text-rose-600">{formError}</p>}
               <button
                 type="submit"
-                disabled={loggingIn || !phone.trim() || !password}
+                disabled={loggingIn || !phone.trim() || (loginMode === "password" ? !password : !captcha.trim())}
                 className="tap-scale w-full rounded-[0.9rem] bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {loggingIn ? "登录中…" : "登录"}
@@ -851,7 +918,7 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
                 disabled={busy}
                 className="w-full rounded-[0.9rem] bg-neutral-950/[0.04] px-3 py-2.5 text-xs text-neutral-500 transition disabled:opacity-50"
               >
-                {busy ? "获取二维码…" : "没有密码?改用二维码登录(网易云 App 扫码)"}
+                {busy ? "获取二维码…" : "不方便收短信/输密码?改用二维码登录"}
               </button>
             </form>
           )}

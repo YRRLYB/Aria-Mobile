@@ -95,17 +95,37 @@ public final class NeteaseClient {
      * password is MD5-digested here; the raw value is never stored. Returns
      * the raw body so callers can surface code/message.
      */
-    public static JSONObject loginCellphone(Context context, String phone, String password, String countryCode)
+    /** Sends an SMS captcha (weapi /api/sms/captcha/sent). */
+    public static JSONObject captchaSent(Context context, String phone, String countryCode)
             throws NeteaseHttp.NeteaseException {
+        JSONObject data;
+        try {
+            data = new JSONObject()
+                    .put("ctcode", countryCode == null || countryCode.isEmpty() ? "86" : countryCode)
+                    .put("secrete", "music_middleuser_pclogin")
+                    .put("cellphone", phone);
+        } catch (JSONException error) {
+            throw new NeteaseHttp.NeteaseException(500, "captchaSent build failed");
+        }
+        return NeteaseHttp.request(context, "/api/sms/captcha/sent", data, "weapi");
+    }
+
+    /** Password or SMS-captcha login — exactly one of password/captcha is used. */
+    public static JSONObject loginCellphone(Context context, String phone, String password, String captcha,
+            String countryCode) throws NeteaseHttp.NeteaseException {
         JSONObject data;
         try {
             data = new JSONObject()
                     .put("type", "1")
                     .put("https", "true")
                     .put("phone", phone)
-                    .put("countrycode", countryCode == null || countryCode.isEmpty() ? "86" : countryCode)
-                    .put("password", NeteaseCrypto.md5Hex(password))
-                    .put("remember", "true");
+                    .put("countrycode", countryCode == null || countryCode.isEmpty() ? "86" : countryCode);
+            if (captcha != null && !captcha.isEmpty()) {
+                data.put("captcha", captcha);
+            } else {
+                data.put("password", NeteaseCrypto.md5Hex(password == null ? "" : password));
+            }
+            data.put("remember", "true");
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "loginCellphone build failed");
         }

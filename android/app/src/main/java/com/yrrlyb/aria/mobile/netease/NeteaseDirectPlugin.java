@@ -82,14 +82,15 @@ public class NeteaseDirectPlugin extends Plugin {
     public void loginCellphone(PluginCall call) {
         String phone = call.getString("phone", "");
         String password = call.getString("password", "");
+        String captcha = call.getString("captcha", "");
         String countryCode = call.getString("countryCode", "86");
-        if (phone.isEmpty() || password.isEmpty()) {
-            call.reject("手机号和密码不能为空");
+        if (phone.isEmpty() || (password.isEmpty() && captcha.isEmpty())) {
+            call.reject("手机号和登录凭据不能为空");
             return;
         }
         executor.execute(() -> {
             try {
-                JSONObject body = NeteaseClient.loginCellphone(getContext(), phone, password, countryCode);
+                JSONObject body = NeteaseClient.loginCellphone(getContext(), phone, password, captcha, countryCode);
                 int code = body.optInt("code", 0);
                 JSObject result = new JSObject();
                 result.put("ok", code == 200);
@@ -102,6 +103,29 @@ public class NeteaseDirectPlugin extends Plugin {
                 call.resolve(result);
             } catch (Exception error) {
                 call.reject("登录失败", String.valueOf(error.getMessage()));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void captchaSent(PluginCall call) {
+        String phone = call.getString("phone", "");
+        String countryCode = call.getString("countryCode", "86");
+        if (phone.isEmpty()) {
+            call.reject("手机号不能为空");
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                JSONObject body = NeteaseClient.captchaSent(getContext(), phone, countryCode);
+                int code = body.optInt("code", 0);
+                JSObject result = new JSObject();
+                result.put("ok", code == 200);
+                result.put("code", code);
+                result.put("message", code == 200 ? "验证码已发送" : body.optString("message", body.optString("msg", "发送失败(" + code + ")")));
+                call.resolve(result);
+            } catch (Exception error) {
+                call.reject("发送验证码失败", String.valueOf(error.getMessage()));
             }
         });
     }
