@@ -422,6 +422,11 @@ export const api = {
     return apiUrl(`/api/providers/netease/cover?url=${encodeURIComponent(sourceUrl)}`);
   },
   searchLyrics(query: { title: string; artist?: string; album?: string }) {
+    if (neteaseDirect()) {
+      // Direct mode binds lyrics straight from the song id; the desktop's
+      // local-file lyric search endpoint does not exist locally.
+      return Promise.resolve({ candidates: [] });
+    }
     const params = new URLSearchParams();
     params.set("title", query.title);
     if (query.artist) params.set("artist", query.artist);

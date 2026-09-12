@@ -148,11 +148,13 @@ public class NeteaseDirectPlugin extends Plugin {
         executor.execute(() -> {
             try {
                 org.json.JSONObject body = dispatch(endpoint, new org.json.JSONObject(dataJson));
+                android.util.Log.i("NeteaseDirect", endpoint + " ok code=" + body.optInt("code", 0));
                 JSObject result = new JSObject();
                 result.put("ok", true);
                 result.put("data", JSObject.fromJSONObject(body));
                 call.resolve(result);
             } catch (NeteaseHttp.NeteaseException error) {
+                android.util.Log.w("NeteaseDirect", endpoint + " -> " + error.code + " " + error.getMessage());
                 JSObject result = new JSObject();
                 result.put("ok", false);
                 result.put("code", error.code);

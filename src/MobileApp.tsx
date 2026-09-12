@@ -767,7 +767,13 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   }, [hifiEnabled]);
 
   // Initial data load: account info (desktop reads /api/settings for this),
-  // then netease pools. Local library loads inside its own hook.
+  // then netease pools. Local library loads inside its own hook. Runs ONCE —
+  // refreshNeteaseData is a fresh function each render, so depending on it
+  // directly would re-fire (and hammer the API) on every render.
+  const initialRefreshRef = useRef(refreshNeteaseData);
+  useEffect(() => {
+    initialRefreshRef.current = refreshNeteaseData;
+  });
   useEffect(() => {
     api
       .getSettings()
@@ -775,8 +781,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         netease.setNeteaseAccount(settings.neteaseAccount);
       })
       .catch(() => undefined);
-    refreshNeteaseData().catch(() => undefined);
-  }, [refreshNeteaseData]);
+    initialRefreshRef.current().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const likedLocalTracks = useMemo(
     () => localTracks.filter((track) => likedTrackIds[track.id]),
