@@ -70,7 +70,9 @@ type RawSong = {
 function mapSong(song: RawSong): ProviderTrack {
   const maxbr = song.privilege?.maxbr ?? 0;
   return {
-    id: `netease:${song.id}`,
+    // Raw numeric id — the desktop-shaped mapping (providerTrackToUiTrack)
+    // adds the netease: prefix exactly once, like the desktop server does.
+    id: String(song.id),
     title: song.name ?? `#${song.id}`,
     artist: (song.ar ?? song.singers ?? []).map((artist) => artist.name).join(" / "),
     album: song.al?.name ?? song.album?.name ?? "",

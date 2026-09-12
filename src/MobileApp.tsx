@@ -103,6 +103,7 @@ export type MobileControls = {
   setHifiEnabled: (enabled: boolean) => void;
   setQualityLevel: (level: QualityLevel) => void;
   openNowPlaying: () => void;
+  onLyricsCollapse: () => void;
   disconnect: () => void;
   switchToDesktopMode: () => void;
   addDeviceTracks: (tracks: Track[]) => void;
@@ -528,6 +529,8 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   // Rapid double-taps can re-run the load effect for the same track; each run
   // is a startForegroundService round-trip. Dedupe within a short window.
   const lastNativeLoadRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
+  const skipGuardRef = useRef(0);
+  const [playNotice, setPlayNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!nativeAudio) return;
@@ -551,9 +554,22 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         const meta = await resolveDirectStreamUrl(activeTrack.id, targetLevelFor(activeTrack, hifiEnabled, qualityLevel));
         if (cancelled) return;
         if (!meta?.url) {
-          setPlaying(false);
+          // VIP/copyright-blocked track: skip forward like the NetEase app,
+          // but bound the chain so a fully blocked queue cannot spin.
+          if (skipGuardRef.current < 8) {
+            skipGuardRef.current += 1;
+            setPlayNotice(`「${activeTrack.title}」暂时无法播放,已自动切下一首`);
+            window.setTimeout(() => setPlayNotice(null), 2600);
+            pickRelativeTrack(1);
+          } else {
+            skipGuardRef.current = 0;
+            setPlaying(false);
+            setPlayNotice("连续多首无法播放,已停止");
+            window.setTimeout(() => setPlayNotice(null), 3000);
+          }
           return;
         }
+        skipGuardRef.current = 0;
         applyTrackUpdate(activeTrack.id, (track) => ({
           ...track,
           streamUrl: meta.url ?? undefined,
@@ -566,7 +582,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         url = meta.url;
       }
       if (cancelled) return;
+      skipGuardRef.current = 0;
       const loadUrl: string = url;
+      console.log("[aria] load", activeTrack.id, "->", loadUrl.slice(0, 90));
       await AriaAudio.load({
         url: loadUrl,
         trackId: activeTrack.id,
@@ -796,18 +814,22 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   }, [hifiEnabled]);
 
   // Seed the pools from the last successful refresh so the home screen is
-  // never empty on relaunch; the refresh below then replaces them in place.
+  // never empty on relaunch. When the cache is fresh (same day) the boot
+  // refresh is skipped entirely — no second-load flicker.
+  const poolsSeededRef = useRef(false);
   useEffect(() => {
     try {
       const raw = localStorage.getItem("aria-pools-cache");
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
-        daily?: Track[]; roam?: Track[]; liked?: Track[]; playlists?: ProviderPlaylist[];
+        daily?: Track[]; roam?: Track[]; liked?: Track[]; playlists?: ProviderPlaylist[]; savedAt?: number;
       };
       if (parsed.daily?.length) netease.setDailyTracks(parsed.daily);
       if (parsed.roam?.length) netease.setRoamTracks(parsed.roam);
       if (parsed.liked?.length) netease.setNeteaseLikedTracks(parsed.liked);
       if (parsed.playlists?.length) netease.setProviderPlaylists(parsed.playlists);
+      const sameDay = parsed.savedAt && new Date(parsed.savedAt).toDateString() === new Date().toDateString();
+      poolsSeededRef.current = Boolean(sameDay && (parsed.daily?.length || parsed.liked?.length));
     } catch {
       // cache is best-effort
     }
@@ -829,7 +851,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         netease.setNeteaseAccount(settings.neteaseAccount);
       })
       .catch(() => undefined);
-    initialRefreshRef.current().catch(() => undefined);
+    if (!poolsSeededRef.current) {
+      initialRefreshRef.current().catch(() => undefined);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -899,6 +923,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     setHifiEnabled,
     setQualityLevel,
     openNowPlaying: () => setNowPlayingOpen(true),
+    onLyricsCollapse: () => undefined,
     disconnect: onDisconnect,
     switchToDesktopMode: () => {
       disableDirectMode();
@@ -933,6 +958,18 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
       <AnimatePresence>
         {nowPlayingOpen && <NowPlaying {...controls} onClose={() => setNowPlayingOpen(false)} />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {playNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="safe-top pointer-events-none fixed inset-x-0 top-0 z-40 flex justify-center pt-3"
+          >
+            <span className="rounded-full bg-neutral-950/90 px-4 py-2 text-xs text-white shadow-lg">{playNotice}</span>
+          </motion.div>
+        )}
       </AnimatePresence>
       <StatusBarIconsSync light={nowPlayingOpen} />
     </div>

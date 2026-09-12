@@ -145,16 +145,16 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
             />
           )}
         </AnimatePresence>
-        {view === "lyrics" && coverUrl && (
+        {/* blurred artwork bed: always mounted, crossfades in for lyrics */}
+        {coverUrl && (
           <motion.img
             key={"blur-" + coverUrl}
             src={coverUrl}
             alt=""
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.45 }}
-            className="absolute inset-0 h-full w-full scale-125 object-cover blur-3xl"
+            initial={false}
+            animate={{ opacity: view === "lyrics" ? 0.5 : 0 }}
+            transition={{ duration: 0.55, ease: "easeInOut" }}
+            className="absolute inset-0 h-full w-full scale-150 object-cover blur-[60px] brightness-[0.8]"
             draggable={false}
           />
         )}
@@ -213,6 +213,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
                 activeLyric ? (
                   <motion.p
                     layoutId="active-lyric-line"
+                    transition={{ type: "spring", stiffness: 260, damping: 30 }}
                     className="line-clamp-1 px-2 pb-3 text-center text-sm text-white/60"
                   >
                     {activeLyric}
@@ -224,7 +225,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
                 <span className="flex-1" />
               )}
             </button>
-            {view === "lyrics" && <LyricsView controls={controls} />}
+            {view === "lyrics" && <LyricsView controls={{ ...controls, onLyricsCollapse: () => setView("cover") }} />}
           </div>
         )}
         <AnimatePresence>{view === "queue" && <QueueSheet controls={controls} />}</AnimatePresence>

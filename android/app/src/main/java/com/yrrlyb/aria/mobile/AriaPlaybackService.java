@@ -79,6 +79,7 @@ public class AriaPlaybackService extends MediaSessionService {
 
         @Override
         public void onIsPlayingChanged(boolean isPlaying) {
+            android.util.Log.i("AriaPlayback", "playing=" + isPlaying + " trackId=" + currentTrackId());
             Map<String, Object> event = baseEvent("state");
             event.put("playing", isPlaying);
             emit(event);
@@ -248,6 +249,9 @@ public class AriaPlaybackService extends MediaSessionService {
 
     private void applyLoad(Bundle extras) {
         runOnMain(() -> {
+            android.util.Log.i("AriaPlayback", "applyLoad trackId=" + extras.getString("trackId", "")
+                    + " url=" + extras.getString("url", "")
+                    + " paused=" + extras.getBoolean("paused", false));
             MediaItem item = buildItem(extras);
             double position = extras.getDouble("position", 0.0);
             long startPosition = position > 0.1 ? (long) (position * 1000) : C.TIME_UNSET;
@@ -312,6 +316,14 @@ public class AriaPlaybackService extends MediaSessionService {
         if (player == null) return 0.0;
         long duration = player.getDuration();
         return duration == C.TIME_UNSET || duration <= 0 ? 0.0 : duration / 1000.0;
+    }
+
+    private String currentTrackId() {
+        ExoPlayer activePlayer = player;
+        if (activePlayer != null && activePlayer.getCurrentMediaItem() != null) {
+            return trackIdOf(activePlayer.getCurrentMediaItem());
+        }
+        return "";
     }
 
     private static String trackIdOf(MediaItem item) {
