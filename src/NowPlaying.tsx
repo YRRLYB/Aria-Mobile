@@ -21,6 +21,7 @@ import {
   getActiveLyricIndex,
   type CoverPalette,
 } from "@/lib/playerPresentation";
+import { TrackCover } from "./Chrome";
 import type { MobileControls } from "./MobileApp";
 
 type NowPlayingView = "cover" | "lyrics" | "queue";
@@ -54,6 +55,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
     repeatMode,
     playQueueTracks,
     likedTrackIds,
+    neteaseLikedIds,
     onClose,
     togglePlayback,
     playNext,
@@ -68,7 +70,9 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
   const [view, setView] = useState<NowPlayingView>("cover");
   const [palette, setPalette] = useState<CoverPalette | null>(null);
   const isIdle = activeTrack.id === idleTrack.id;
-  const liked = activeTrack.source === "netease" || Boolean(likedTrackIds[activeTrack.id]);
+  const liked = activeTrack.source === "netease"
+    ? Boolean(neteaseLikedIds[activeTrack.id] || activeTrack.likedAt)
+    : Boolean(likedTrackIds[activeTrack.id]);
   const coverUrl = activeTrack.coverUrl ?? (activeTrack.cover.startsWith("http") ? activeTrack.cover : undefined);
   const fallbackDominant = isHexColor(activeTrack.cover) ? activeTrack.cover : "#4b4f5e";
 
@@ -101,6 +105,9 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
   const dominantSoft = darkenHex(dominant, 0.38);
   const dominantDeep = darkenHex(dominant, 0.17);
   const progress = durationSeconds > 0 ? Math.min(1, currentTime / durationSeconds) : 0;
+  const lyricLines = activeTrack.lyrics ?? [];
+  const activeLyricIndex = lyricLines.length ? getActiveLyricIndex(lyricLines, currentTime) : -1;
+  const activeLyric = activeLyricIndex >= 0 ? lyricLines[activeLyricIndex]?.text : "";
   const qualityParts = [
     activeTrack.quality,
     formatBitrate(activeTrack.bitrate, true),
@@ -138,6 +145,19 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
             />
           )}
         </AnimatePresence>
+        {view === "lyrics" && coverUrl && (
+          <motion.img
+            key={"blur-" + coverUrl}
+            src={coverUrl}
+            alt=""
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.45 }}
+            className="absolute inset-0 h-full w-full scale-125 object-cover blur-3xl"
+            draggable={false}
+          />
+        )}
         {/* dominant tint over the artwork keeps the whole page in one hue.
             Must reach full opacity before the artwork's bottom edge (64%)
             so the image melts into the background without a hard cut. */}
@@ -182,8 +202,28 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
       {/* ---- Middle zone: cover breathing room / lyrics / queue ---- */}
       <div className="relative z-10 flex min-h-0 flex-1 flex-col">
         {view !== "queue" && (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex-1" />
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <button
+              type="button"
+              onClick={() => setView(view === "lyrics" ? "cover" : "lyrics")}
+              className="flex min-h-0 flex-1 flex-col justify-end"
+              aria-label="切换歌词显示"
+            >
+              {view === "cover" ? (
+                activeLyric ? (
+                  <motion.p
+                    layoutId="active-lyric-line"
+                    className="line-clamp-1 px-2 pb-3 text-center text-sm text-white/60"
+                  >
+                    {activeLyric}
+                  </motion.p>
+                ) : (
+                  <span className="pb-3 text-center text-xs text-white/30">点按显示歌词</span>
+                )
+              ) : (
+                <span className="flex-1" />
+              )}
+            </button>
             {view === "lyrics" && <LyricsView controls={controls} />}
           </div>
         )}
@@ -358,7 +398,13 @@ function QueueSheet({ controls }: { controls: MobileControls }) {
       transition={{ type: "spring", stiffness: 320, damping: 34 }}
       className="safe-bottom absolute inset-x-0 bottom-0 top-16 z-20 flex min-h-0 flex-col rounded-t-[1.6rem] border-t border-white/10 bg-[#0c0c0f]/97 px-4 pt-4 backdrop-blur-xl"
     >
-      <p className="pb-3 text-sm font-semibold text-white/80">当前队列 · {playQueueTracks.length} 首</p>
+      <div className="flex items-center justify-between pb-3">
+        <p className="text-sm font-semibold text-white/80">当前队列 · {playQueueTracks.length} 首</p>
+        <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+          {controls.repeatMode === "one" ? <Repeat1 className="size-3.5" /> : <Repeat className="size-3.5" />}
+          {controls.repeatMode === "one" ? "单曲循环" : "列表循环"}
+        </span>
+      </div>
       <div className="no-scrollbar min-h-0 flex-1 space-y-0.5 overflow-y-auto pb-4">
         {playQueueTracks.map((track) => (
           <button

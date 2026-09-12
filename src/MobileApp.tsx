@@ -26,6 +26,7 @@ import { useLyricsSync } from "@/hooks/useLyricsSync";
 import { useDiscovery, type SearchBundle } from "@/hooks/useDiscovery";
 import { ConnectScreen } from "./ConnectScreen";
 import { clearConnection, readConnection, verifyConnection } from "./connection";
+import { App as CapacitorApp } from "@capacitor/app";
 import { AriaAudio, isNativeApp, setStatusBarIconsLight, type AriaAudioEvent } from "./native/ariaAudio";
 import {
   disableDirectMode,
@@ -48,6 +49,8 @@ export type TrackUpdateOptions = { includeHistory?: boolean };
 
 export type MobileControls = {
   directMode: boolean;
+  deviceTracks: Track[];
+  neteaseLikedIds: Record<string, true>;
   activeTrack: Track;
   activeTrackId: string;
   playing: boolean;
@@ -101,6 +104,7 @@ export type MobileControls = {
   openNowPlaying: () => void;
   disconnect: () => void;
   switchToDesktopMode: () => void;
+  addDeviceTracks: (tracks: Track[]) => void;
 };
 
 export function MobileApp() {
@@ -197,6 +201,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   });
   const [playHistory, setPlayHistory] = useState<PlayHistoryEntry[]>(readPlayHistory);
   const [searchQuery, setSearchQuery] = useState("");
+  const [deviceTracks, setDeviceTracks] = useState<Track[]>([]);
 
   const pendingSeekRef = useRef(0);
   const handleTrackEndedRef = useRef<() => void>(() => undefined);
@@ -284,8 +289,8 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   }, [artistTracks]);
 
   const allTracks = useMemo(
-    () => [...discoveryAllTracks, ...artistPoolTracks, ...playHistory.map((entry) => entry.track)],
-    [discoveryAllTracks, artistPoolTracks, playHistory],
+    () => [...discoveryAllTracks, ...artistPoolTracks, ...deviceTracks, ...playHistory.map((entry) => entry.track)],
+    [discoveryAllTracks, artistPoolTracks, deviceTracks, playHistory],
   );
 
   const trackById = useMemo(() => {
@@ -356,6 +361,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   }
 
   function chooseTrack(trackId: string, preferredQueue?: Track[]) {
+    if (nativeAudio && !batteryPromptShownRef.current) {
+      batteryPromptShownRef.current = true;
+      void import("./native/ariaShell").then((m) => m.requestUninterruptedPlayback());
+    }
     const queue = resolveQueueForTrack(trackId, preferredQueue);
     const preferredTarget = preferredQueue?.find((track) => track.id === trackId && track.streamUrl);
     if (preferredQueue && !preferredTarget) return;
@@ -466,6 +475,26 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   const currentTime = usePlaybackTime();
   const nativeAudio = useMemo(() => isNativeApp(), []);
 
+  // Hardware/gesture back: step back inside the app instead of exiting.
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    let handle: { remove(): void } | null = null;
+    void CapacitorApp.addListener("backButton", () => {
+      if (nowPlayingOpen) setNowPlayingOpen(false);
+      else if (activeTab !== "home") setActiveTab("home");
+      else void CapacitorApp.exitApp();
+    }).then((handleRef) => {
+      handle = handleRef;
+    });
+    return () => {
+      handle?.remove();
+    };
+  }, [nowPlayingOpen, activeTab]);
+
+  // Battery-optimization exemption keeps the foreground service alive when
+  // the app is backgrounded; asked once, right before the first play.
+  const batteryPromptShownRef = useRef(false);
+
   // Notification permission is required for the media card on Android 13+.
   useEffect(() => {
     if (!nativeAudio) return;
@@ -493,6 +522,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     const loadKey = `${activeTrack.id}|${activeTrack.streamUrl}`;
     if (loadKey === lastNativeLoadRef.current.key && Date.now() - lastNativeLoadRef.current.at < 500) return;
     lastNativeLoadRef.current = { key: loadKey, at: Date.now() };
+    // Stop the previous item right away: the pause/play effect below would
+    // otherwise resume it while the new stream is still being resolved.
+    void AriaAudio.setPaused({ paused: true }).catch(() => undefined);
     resetPlaybackTime();
     setDurationSeconds(0);
     let cancelled = false;
@@ -546,15 +578,28 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   useEffect(() => {
     if (!nativeAudio || !activeTrack.streamUrl) return;
     if (!nextQueueTrack?.streamUrl) return;
-    void AriaAudio.loadNext({
-      url: nextQueueTrack.streamUrl,
-      trackId: nextQueueTrack.id,
-      title: nextQueueTrack.title,
-      artist: nextQueueTrack.artist,
-      album: nextQueueTrack.album,
-      artworkUrl: nextQueueTrack.coverUrl ?? (nextQueueTrack.cover.startsWith("http") ? nextQueueTrack.cover : undefined),
-    }).catch(() => undefined);
-  }, [nativeAudio, activeTrack.streamUrl, activeTrack.id, nextQueueTrack]);
+    let cancelled = false;
+    void (async () => {
+      let url: string = playbackStreamUrl(nextQueueTrack, hifiEnabled, qualityLevel) ?? nextQueueTrack.streamUrl ?? "";
+      if (url.startsWith("direct:")) {
+        const meta = await resolveDirectStreamUrl(nextQueueTrack.id, targetLevelFor(nextQueueTrack, hifiEnabled, qualityLevel));
+        if (cancelled) return;
+        if (!meta?.url) return; // gapless append is best-effort
+        url = meta.url;
+      }
+      await AriaAudio.loadNext({
+        url,
+        trackId: nextQueueTrack.id,
+        title: nextQueueTrack.title,
+        artist: nextQueueTrack.artist,
+        album: nextQueueTrack.album,
+        artworkUrl: nextQueueTrack.coverUrl ?? (nextQueueTrack.cover.startsWith("http") ? nextQueueTrack.cover : undefined),
+      }).catch(() => undefined);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [nativeAudio, activeTrack.streamUrl, activeTrack.id, nextQueueTrack, hifiEnabled, qualityLevel]);
 
   useEffect(() => {
     if (!nativeAudio) return;
@@ -745,6 +790,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
   const controls: MobileControls = {
     directMode,
+    deviceTracks,
+    neteaseLikedIds,
+    addDeviceTracks: (tracks: Track[]) => setDeviceTracks((current) => (current.length ? current : tracks)),
     activeTrack,
     activeTrackId,
     playing,

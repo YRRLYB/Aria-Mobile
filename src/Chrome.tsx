@@ -91,29 +91,31 @@ export function TrackCover({
   // Netease tracks carry a hex palette in `cover` and the real artwork in
   // `coverUrl`; local tracks put the server cover URL in `cover`.
   const src = [track.coverUrl, track.cover].find(
-    (value) => value && /^(https?:|data:)/.test(value),
+    (value) => value && /^(https?:|data:|content:)/.test(value),
   );
   const [failed, setFailed] = useState(false);
-  if (src && !failed) {
-    return (
-      <img
-        src={src}
-        alt=""
-        loading="lazy"
-        draggable={false}
-        onError={() => setFailed(true)}
-        className={`object-cover ${className}`}
-      />
-    );
-  }
   const tint = track.cover && isHexTint(track.cover) ? track.cover : undefined;
+  // The tile renders underneath the image so covers fade in over a letter
+  // placeholder instead of popping in late on tab switches.
   return (
-    <div
-      className={`flex items-center justify-center text-neutral-600 ${className}`}
-      style={tint ? { background: `linear-gradient(140deg, ${tint}73, #ece7f2)` } : undefined}
-      aria-hidden
-    >
-      <span className="text-lg font-bold opacity-70">{track.title.slice(0, 1) || "♪"}</span>
+    <div className={`relative ${className}`} aria-hidden={src && !failed ? true : undefined}>
+      <div
+        className={`absolute inset-0 flex items-center justify-center text-neutral-600 ${className}`}
+        style={tint ? { background: `linear-gradient(140deg, ${tint}73, #ece7f2)` } : undefined}
+      >
+        <span className="text-lg font-bold opacity-70">{track.title.slice(0, 1) || "♪"}</span>
+      </div>
+      {src && !failed && (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          onError={() => setFailed(true)}
+          className={`absolute inset-0 h-full w-full object-cover ${className}`}
+        />
+      )}
     </div>
   );
 }

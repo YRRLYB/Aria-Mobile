@@ -253,18 +253,24 @@ const directProvider = {
   liked: async () => {
     const liked = await invoke<{ ids?: number[] }>("likedIds");
     const ids = (liked.ids ?? []).map((id) => Number(id)).filter(Boolean);
-    const detail = ids.length
-      ? await invoke<{ songs?: RawSong[] }>("songDetail", { ids })
-      : { songs: [] as RawSong[] };
-    return { tracks: (detail.songs ?? []).map((song) => mapSong(song)) };
+    if (!ids.length) return { tracks: [] };
+    const detail = await invoke<{ songs?: RawSong[] }>("songDetail", { ids });
+    // song_detail may answer out of order — restore the likelist order
+    // (newest liked first).
+    const byId = new Map((detail.songs ?? []).map((song) => [Number(song.id), song]));
+    return { tracks: ids.map((id) => byId.get(id)).filter(Boolean).map((song) => mapSong(song as RawSong)) };
   },
   daily: async () => {
     const body = await invoke<{ data?: { dailySongs?: RawSong[] } }>("dailySongs");
     return { date: today(), tracks: (body.data?.dailySongs ?? []).map((song) => mapSong(song)), reason: "每日推荐" };
   },
   roam: async (limit: number) => {
-    const body = await invoke<{ data?: RawSong[] }>("personalFm");
-    return { date: today(), tracks: (body.data ?? []).slice(0, limit).map((song) => mapSong(song)), reason: "私人漫游" };
+    const body = await invoke<{ data?: Array<RawSong | { mainSong: RawSong }> }>("personalFm");
+    const songs = (body.data ?? [])
+      .slice(0, limit)
+      .map((entry) => (entry && typeof entry === "object" && "mainSong" in entry ? (entry as { mainSong: RawSong }).mainSong : entry as RawSong))
+      .filter(Boolean);
+    return { date: today(), tracks: songs.map((song) => mapSong(song)), reason: "私人漫游" };
   },
   playlists: async () => {
     const body = await invoke<{ playlist?: Array<{ id: number; name: string; coverImgUrl?: string; trackCount?: number; userId?: number }> }>(

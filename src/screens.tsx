@@ -26,6 +26,12 @@ import {
   isDirectCapable,
   registerDirectProvider,
 } from "./native/neteaseDirect";
+import {
+  requestAudioPermission,
+  scanDeviceAudio,
+} from "./native/ariaShell";
+import { formatDuration } from "@/lib/playerPresentation";
+import { APP_VERSION } from "./version";
 import type { MobileControls } from "./MobileApp";
 
 export function TrackRow({
@@ -78,7 +84,7 @@ export function TrackRow({
 
 function SectionHeader({ title, Icon, action }: { title: string; Icon?: typeof Compass; action?: ReactNode }) {
   return (
-    <div className="mb-2 mt-5 flex items-center justify-between first:mt-0">
+    <div className="mb-2.5 mt-6 flex items-center justify-between first:mt-1">
       <h2 className="flex items-center gap-2 text-base font-semibold">
         {Icon && <Icon className="size-4 text-neutral-400" />}
         {title}
@@ -101,7 +107,7 @@ function HorizontalTrackCard({
     <button
       type="button"
       onClick={onPlay}
-      className="tap-scale w-28 shrink-0 text-left"
+      className="tap-scale w-32 shrink-0 text-left"
     >
       <div className={`overflow-hidden rounded-[0.9rem] shadow-sm ${active ? "ring-2 ring-neutral-950" : ""}`}>
         <TrackCover track={track} className="aspect-square w-full" />
@@ -291,12 +297,13 @@ export function HomeScreen(controls: MobileControls) {
   );
 }
 
-type LibrarySection = "local" | "liked" | "playlists" | "history";
+type LibrarySection = "device" | "local" | "liked" | "playlists" | "history";
 
 export function LibraryScreen(controls: MobileControls) {
-  const [section, setSection] = useState<LibrarySection>("local");
+  const [section, setSection] = useState<LibrarySection>("device");
   const sections: Array<{ id: LibrarySection; label: string }> = [
-    { id: "local", label: "本地曲库" },
+    { id: "device", label: "手机音乐" },
+    { id: "local", label: "桌面曲库" },
     { id: "liked", label: "我喜欢" },
     { id: "playlists", label: "歌单" },
     { id: "history", label: "最近播放" },
@@ -319,6 +326,7 @@ export function LibraryScreen(controls: MobileControls) {
         ))}
       </div>
       <div className="mt-3">
+        {section === "device" && <DeviceSection {...controls} />}
         {section === "local" && <LocalSection {...controls} />}
         {section === "liked" && <LikedSection {...controls} />}
         {section === "playlists" && <PlaylistsSection {...controls} />}
@@ -491,6 +499,98 @@ function HistorySection(controls: MobileControls) {
   );
 }
 
+function DeviceSection(controls: MobileControls) {
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState(controls.deviceTracks.length > 0);
+  const [hint, setHint] = useState("");
+
+  async function scan() {
+    setScanning(true);
+    setHint("");
+    const granted = await requestAudioPermission();
+    if (!granted) {
+      setScanning(false);
+      setHint("需要授权访问手机音频,请在系统弹窗中允许。");
+      return;
+    }
+    const raw = await scanDeviceAudio();
+    if (!raw.length) {
+      setScanning(false);
+      setHint("没有在手机里找到音频文件。");
+      return;
+    }
+    controls.addDeviceTracks(
+      raw.map((item: { id: string; title: string; artist: string; album: string; durationMs: number; streamUrl: string; coverUrl: string }) => ({
+        id: `device:${item.id}`,
+        title: item.title,
+        artist: item.artist || "未知歌手",
+        album: item.album || "未知专辑",
+        duration: formatDuration(item.durationMs / 1000),
+        quality: "Lossless" as const,
+        source: "local" as const,
+        streamUrl: item.streamUrl,
+        cover: item.coverUrl,
+        coverUrl: item.coverUrl,
+        accent: "#c9d3f2",
+        waveform: [24, 40, 66, 48, 78, 56, 36, 84, 62, 42, 70, 52],
+        lyrics: [],
+        lyricStatus: "missing" as const,
+      })),
+    );
+    setScanned(true);
+    setScanning(false);
+  }
+
+  const deviceTracks = controls.deviceTracks;
+  return (
+    <>
+      {!scanned || deviceTracks.length === 0 ? (
+        <div className="rounded-[1rem] bg-white/60 p-4">
+          <p className="text-xs leading-5 text-neutral-500">
+            扫描手机里的音频文件,离线也能听。文件只在手机上播放,不会上传。
+          </p>
+          {hint && <p className="mt-2 text-xs text-amber-600">{hint}</p>}
+          <button
+            type="button"
+            onClick={scan}
+            disabled={scanning}
+            className="tap-scale mt-3 flex items-center gap-2 rounded-full bg-neutral-950 px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+          >
+            {scanning ? <Loader2 className="size-3.5 animate-spin" /> : <ListMusic className="size-3.5" />}
+            {scanning ? "扫描中…" : deviceTracks.length ? "重新扫描" : "扫描手机音乐"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <PlayAllButton onPlay={() => deviceTracks[0] && controls.chooseTrack(deviceTracks[0].id, deviceTracks)} count={deviceTracks.length} />
+            <button
+              type="button"
+              onClick={scan}
+              disabled={scanning}
+              className="tap-scale flex size-8 items-center justify-center rounded-full bg-white shadow-sm disabled:opacity-50"
+              aria-label="重新扫描"
+            >
+              <RefreshCw className={`size-3.5 text-neutral-500 ${scanning ? "animate-spin" : ""}`} />
+            </button>
+          </div>
+          <div className="mt-2 space-y-0.5">
+            {deviceTracks.map((track) => (
+              <TrackRow
+                key={track.id}
+                track={track}
+                active={controls.activeTrackId === track.id}
+                onPlay={() => controls.chooseTrack(track.id, deviceTracks)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+
 export function SearchScreen(controls: MobileControls) {
   const { searchQuery, setSearchQuery, searchBundle, searchLoading, artistTracks, selectedArtist, setSelectedArtist, chooseTrack, toggleLikeTrack, likedTrackIds } = controls;
   const hasQuery = searchQuery.trim().length > 0;
@@ -508,6 +608,35 @@ export function SearchScreen(controls: MobileControls) {
         <button type="button" onClick={() => setSelectedArtist(null)} className="tap-scale mt-3 text-xs text-neutral-500">
           ← {selectedArtist.name} 的热门歌曲
         </button>
+      )}
+      {!selectedArtist && searchBundle.artists.length > 0 && (
+        <>
+          <p className="mt-4 text-xs font-medium text-neutral-400">相关歌手</p>
+          <div className="no-scrollbar -mx-4 mt-2 flex gap-3 overflow-x-auto px-4">
+            {searchBundle.artists.slice(0, 12).map((artist) => (
+              <button
+                key={artist.id}
+                type="button"
+                onClick={() => controls.setSelectedArtist(artist)}
+                className="tap-scale w-16 shrink-0 text-center"
+              >
+                {artist.avatarUrl ? (
+                  <img
+                    src={artist.avatarUrl}
+                    alt=""
+                    loading="lazy"
+                    className="size-16 rounded-full object-cover shadow-sm"
+                  />
+                ) : (
+                  <div className="flex size-16 items-center justify-center rounded-full bg-white shadow-sm">
+                    <UserRound className="size-6 text-neutral-300" />
+                  </div>
+                )}
+                <p className="mt-1 truncate text-[11px] text-neutral-600">{artist.name}</p>
+              </button>
+            ))}
+          </div>
+        </>
       )}
       {searchLoading && (
         <p className="mt-4 flex items-center gap-2 text-xs text-neutral-400">
@@ -620,7 +749,7 @@ export function SettingsScreen(controls: MobileControls) {
             <span className={`size-5 rounded-full bg-white shadow-sm transition ${hifiEnabled ? "translate-x-5" : ""}`} />
           </span>
         </button>
-        <div className="no-scrollbar mt-3 flex gap-2 overflow-x-auto">
+        <div className="mt-3 flex flex-wrap gap-2">
           {qualityOptions.map((option) => (
             <button
               key={option.value}
@@ -636,6 +765,7 @@ export function SettingsScreen(controls: MobileControls) {
         </div>
       </section>
 
+      {!controls.directMode && (
       <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Connection</p>
         <h3 className="mt-1 text-base font-semibold">桌面端连接</h3>
@@ -658,9 +788,10 @@ export function SettingsScreen(controls: MobileControls) {
           断开连接
         </button>
       </section>
+      )}
 
       <p className="pb-2 text-center text-[11px] text-neutral-400">
-        Aria Mobile · 与桌面端共用曲库与账号 · 仅限局域网使用
+        Aria Mobile v{APP_VERSION} · {controls.directMode ? "直连模式 · 手机直连网易云音乐" : "伴侣模式 · 与桌面端共用曲库(仅限局域网)"}
       </p>
     </div>
   );
@@ -672,10 +803,8 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
   const [captcha, setCaptcha] = useState("");
   const [countryCode, setCountryCode] = useState("86");
-  const [loginMode, setLoginMode] = useState<"password" | "captcha">("captcha");
   const [countdown, setCountdown] = useState(0);
   const [formError, setFormError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
@@ -700,18 +829,16 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
   async function submitLogin(event: React.FormEvent) {
     event.preventDefault();
     if (!phone.trim() || loggingIn) return;
-    if (loginMode === "password" && !password) return;
-    if (loginMode === "captcha" && !captcha.trim()) return;
+    if (!captcha.trim()) return;
     setLoggingIn(true);
     setFormError("");
     const result = await directCellphoneLogin(
       phone.trim(),
-      loginMode === "password" ? { password } : { captcha: captcha.trim() },
+      { captcha: captcha.trim() },
       countryCode.trim() || "86",
     );
     setLoggingIn(false);
     if (result.ok) {
-      setPassword("");
       setCaptcha("");
       registerDirectProvider();
       setAccount(await directAccount());
@@ -840,25 +967,6 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
             </div>
           ) : (
             <form onSubmit={submitLogin} className="space-y-2.5">
-              <div className="grid grid-cols-2 gap-1 rounded-[0.9rem] bg-neutral-950/[0.05] p-1">
-                {(
-                  [
-                    { id: "captcha" as const, label: "验证码登录" },
-                    { id: "password" as const, label: "密码登录" },
-                  ]
-                ).map(({ id, label }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setLoginMode(id)}
-                    className={`rounded-[0.7rem] py-2 text-xs font-medium transition ${
-                      loginMode === id ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
               <div className="flex gap-2">
                 <input
                   value={countryCode}
@@ -876,38 +984,27 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
                   className="min-w-0 flex-1 rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
                 />
               </div>
-              {loginMode === "password" ? (
+              <div className="flex gap-2">
                 <input
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="网易云密码"
-                  type="password"
-                  autoComplete="current-password"
-                  className="w-full rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
+                  value={captcha}
+                  onChange={(event) => setCaptcha(event.target.value)}
+                  placeholder="短信验证码"
+                  inputMode="numeric"
+                  className="min-w-0 flex-1 rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
                 />
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    value={captcha}
-                    onChange={(event) => setCaptcha(event.target.value)}
-                    placeholder="短信验证码"
-                    inputMode="numeric"
-                    className="min-w-0 flex-1 rounded-[0.8rem] border border-neutral-950/10 px-3 py-2.5 text-sm outline-none focus:border-neutral-950/40"
-                  />
-                  <button
-                    type="button"
-                    onClick={sendCaptcha}
-                    disabled={!phone.trim() || countdown > 0}
-                    className="shrink-0 rounded-[0.8rem] bg-neutral-950/[0.06] px-3 text-xs font-medium text-neutral-700 disabled:opacity-50"
-                  >
-                    {countdown > 0 ? `${countdown}s` : "发送验证码"}
-                  </button>
-                </div>
-              )}
+                <button
+                  type="button"
+                  onClick={sendCaptcha}
+                  disabled={!phone.trim() || countdown > 0}
+                  className="shrink-0 rounded-[0.8rem] bg-neutral-950/[0.06] px-3 text-xs font-medium text-neutral-700 disabled:opacity-50"
+                >
+                  {countdown > 0 ? `${countdown}s` : "发送验证码"}
+                </button>
+              </div>
               {formError && <p className="text-xs text-rose-600">{formError}</p>}
               <button
                 type="submit"
-                disabled={loggingIn || !phone.trim() || (loginMode === "password" ? !password : !captcha.trim())}
+                disabled={loggingIn || !phone.trim() || !captcha.trim()}
                 className="tap-scale w-full rounded-[0.9rem] bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {loggingIn ? "登录中…" : "登录"}
@@ -918,7 +1015,7 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
                 disabled={busy}
                 className="w-full rounded-[0.9rem] bg-neutral-950/[0.04] px-3 py-2.5 text-xs text-neutral-500 transition disabled:opacity-50"
               >
-                {busy ? "获取二维码…" : "不方便收短信/输密码?改用二维码登录"}
+                {busy ? "获取二维码…" : "不方便收短信?改用二维码登录"}
               </button>
             </form>
           )}
