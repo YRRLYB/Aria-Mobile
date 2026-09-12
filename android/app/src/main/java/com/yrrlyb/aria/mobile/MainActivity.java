@@ -9,6 +9,27 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     @Override
+    protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(base);
+        // Diagnostics: persist any launch crash to
+        // Android/data/com.yrrlyb.aria.mobile/files/crash/last-crash.txt
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            try {
+                java.io.File dir = new java.io.File(getExternalFilesDir(null), "crash");
+                dir.mkdirs();
+                java.io.PrintWriter writer = new java.io.PrintWriter(
+                        new java.io.FileWriter(new java.io.File(dir, "last-crash.txt"), false));
+                writer.println(new java.util.Date().toString());
+                error.printStackTrace(writer);
+                writer.close();
+            } catch (Throwable ignored) {
+            }
+            if (previous != null) previous.uncaughtException(thread, error);
+        });
+    }
+
+    @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AriaAudioPlugin.class);
         registerPlugin(AriaShellPlugin.class);
@@ -19,19 +40,28 @@ public class MainActivity extends BridgeActivity {
         // bar, and the safe-area sizes are injected as CSS variables so the
         // web layer pads seamlessly (a hard WebView margin would leave a flat
         // white strip that clashes with the gradient pages).
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
-        ViewCompat.setOnApplyWindowInsetsListener(getBridge().getWebView(), (view, windowInsets) -> {
-            applySafeAreaInsets(windowInsets);
-            return WindowInsetsCompat.CONSUMED;
-        });
-        // The first inset callback can fire before the WebView document
-        // exists, losing the CSS variables. Re-push a few times after launch
-        // and on every resume so a freshly (re)loaded page always gets them.
-        for (long delay : new long[]{600L, 1800L, 3500L}) {
-            getBridge().getWebView().postDelayed(() -> {
-                ViewCompat.requestApplyInsets(getBridge().getWebView());
-                pushCurrentInsets();
-            }, delay);
+        try {
+            WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+            ViewCompat.setOnApplyWindowInsetsListener(getBridge().getWebView(), (view, windowInsets) -> {
+                applySafeAreaInsets(windowInsets);
+                return WindowInsetsCompat.CONSUMED;
+            });
+            // The first inset callback can fire before the WebView document
+            // exists, losing the CSS variables. Re-push a few times after
+            // launch and on every resume so a freshly (re)loaded page always
+            // gets them.
+            for (long delay : new long[]{600L, 1800L, 3500L}) {
+                getBridge().getWebView().postDelayed(() -> {
+                    try {
+                        ViewCompat.requestApplyInsets(getBridge().getWebView());
+                        pushCurrentInsets();
+                    } catch (Throwable ignored) {
+                    }
+                }, delay);
+            }
+        } catch (Throwable error) {
+            // Immersive layout is cosmetic — never let it block startup.
+            android.util.Log.e("Aria", "safe-area setup failed", error);
         }
     }
 
