@@ -145,29 +145,60 @@ export async function refreshDirectStatus(): Promise<boolean> {
   return directActive;
 }
 
+const ACCOUNT_CACHE_KEY = "aria-account-cache";
+
+function readCachedAccount(): NeteaseAccountSummary | null {
+  try {
+    const raw = localStorage.getItem(ACCOUNT_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as NeteaseAccountSummary;
+    return parsed.connected ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedAccount(account: NeteaseAccountSummary): void {
+  try {
+    if (account.connected) localStorage.setItem(ACCOUNT_CACHE_KEY, JSON.stringify(account));
+    else localStorage.removeItem(ACCOUNT_CACHE_KEY);
+  } catch {
+    // best effort
+  }
+}
+
+export function cachedDirectAccount(): NeteaseAccountSummary | null {
+  return readCachedAccount();
+}
+
 export async function directAccount(): Promise<NeteaseAccountSummary> {
   const status = await NeteaseDirectPlugin.status();
   if (!status.loggedIn) {
+    writeCachedAccount({ connected: false, nickname: null, userId: null, avatarUrl: null, cookiePreview: null });
     return { connected: false, nickname: null, userId: null, avatarUrl: null, cookiePreview: null };
   }
   try {
     await invoke("userAccount");
     const refreshed = await NeteaseDirectPlugin.status();
-    return {
+    const account: NeteaseAccountSummary = {
       connected: true,
       nickname: refreshed.nickname || null,
       userId: String(refreshed.userId || ""),
       avatarUrl: refreshed.avatarUrl || null,
       cookiePreview: "本机会话 · 直连",
     };
+    writeCachedAccount(account);
+    return account;
   } catch {
-    return {
+    const account: NeteaseAccountSummary = {
       connected: true,
       nickname: status.nickname || null,
       userId: String(status.userId || ""),
       avatarUrl: status.avatarUrl || null,
       cookiePreview: "本机会话 · 直连",
     };
+    writeCachedAccount(account);
+    return account;
   }
 }
 
@@ -229,27 +260,47 @@ export type DirectStreamMeta = {
   availableLevels: NonNullable<ProviderTrack["availableLevels"]>;
 };
 
+const QUALITY_LADDER: Array<"standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster"> = [
+  "standard", "higher", "exhigh", "lossless", "hires", "jymaster",
+];
+
 export async function directStreamMeta(
   trackId: string,
   level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster",
 ): Promise<DirectStreamMeta> {
   const numeric = trackId.replace(/^(netease:|direct:)+/, "");
-  const body = await invoke<{ data?: Array<{ url?: string; br?: number; level?: string; size?: number; sr?: number }> }>(
-    "songUrlV1",
-    { id: numeric, level },
-  );
-  const first = body.data?.[0];
-  const resolvedLevel = (first?.level ?? level) as DirectStreamMeta["currentLevel"];
-  const tailIndex = LEVEL_TAIL.indexOf(resolvedLevel as (typeof LEVEL_TAIL)[number]);
-  return {
-    url: first?.url ?? null,
-    bitrate: first?.br ?? null,
-    sampleRate: null,
-    size: null,
-    quality: qualityFromLevel(resolvedLevel ?? "lossless"),
-    currentLevel: resolvedLevel,
-    availableLevels: tailIndex >= 0 ? [...LEVEL_TAIL.slice(0, tailIndex + 1)] : ["standard", "higher", "exhigh"],
-  };
+  // VIP accounts get the exact tier; free accounts get null for lossless+ —
+  // walk DOWN the ladder until NetEase actually returns a url.
+  const requested = LEVEL_TAIL.indexOf(level);
+  // requested -> exhigh -> standard: at most 3 calls. Free accounts return
+  // null for lossless+ tiers, so probing the whole ladder is too slow.
+  const ladder: Array<typeof level> = [];
+  for (const candidate of [level, "exhigh" as const, "standard" as const]) {
+    if (!ladder.includes(candidate) && (requested < 0 || LEVEL_TAIL.indexOf(candidate) <= Math.max(requested, LEVEL_TAIL.indexOf("standard")))) {
+      ladder.push(candidate);
+    }
+  }
+  if (!ladder.length) ladder.push(level);
+  for (const candidate of ladder) {
+    const body = await invoke<{ data?: Array<{ url?: string; br?: number; level?: string; size?: number; sr?: number }> }>(
+      "songUrlV1",
+      { id: numeric, level: candidate },
+    );
+    const first = body.data?.[0];
+    if (!first?.url) continue;
+    const resolvedLevel = (first.level ?? candidate) as DirectStreamMeta["currentLevel"];
+    const tailIndex = LEVEL_TAIL.indexOf(resolvedLevel as (typeof LEVEL_TAIL)[number]);
+    return {
+      url: first.url,
+      bitrate: first.br ?? null,
+      sampleRate: null,
+      size: null,
+      quality: qualityFromLevel(resolvedLevel ?? candidate),
+      currentLevel: resolvedLevel,
+      availableLevels: tailIndex >= 0 ? [...LEVEL_TAIL.slice(0, tailIndex + 1)] : ["standard", "higher", "exhigh"],
+    };
+  }
+  return { url: null, bitrate: null, sampleRate: null, size: null, quality: "320K", currentLevel: null, availableLevels: ["standard", "higher", "exhigh"] };
 }
 
 const directProvider = {

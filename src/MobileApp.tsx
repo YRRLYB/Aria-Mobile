@@ -38,6 +38,7 @@ import {
   resolveDirectStreamUrl,
 } from "./native/neteaseDirect";
 import { applySafeAreasFromNative } from "./native/ariaShell";
+import { cachedDirectAccount } from "./native/neteaseDirect";
 import { MiniPlayer, TabBar } from "./Chrome";
 import { HomeScreen, LibraryScreen, SearchScreen, SettingsScreen } from "./screens";
 import { NowPlaying } from "./NowPlaying";
@@ -185,8 +186,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   const [volume, setVolume] = useState(cachedState.volume ?? 85);
   const [shuffleEnabled, setShuffleEnabled] = useState(cachedState.shuffleEnabled ?? false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>(cachedState.repeatMode ?? "all");
-  const [hifiEnabled, setHifiEnabled] = useState(() => readCachedAudioSettings().hifiEnabled ?? true);
-  const [qualityLevel, setQualityLevel] = useState<QualityLevel>(cachedState.qualityLevel ?? "lossless");
+  // Direct mode default: a level free accounts can actually stream (HiFi
+  // stays opt-in — lossless/hires tiers null out for free accounts).
+  const [hifiEnabled, setHifiEnabled] = useState(() => readCachedAudioSettings().hifiEnabled ?? false);
+  const [qualityLevel, setQualityLevel] = useState<QualityLevel>(cachedState.qualityLevel ?? (isNativeApp() ? "exhigh" : "lossless"));
   const [likedTrackIds, setLikedTrackIds] = useState<Record<string, boolean>>(() => {
     try {
       return JSON.parse(window.localStorage.getItem("aria-liked-track-ids") || "{}") as Record<string, boolean>;
@@ -362,7 +365,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     return candidateQueues.find((tracks) => tracks.some((track) => track.id === trackId)) ?? [];
   }
 
-  function chooseTrack(trackId: string, preferredQueue?: Track[]) {
+  const choosingRef = useRef(false);
+
+  async function chooseTrack(trackId: string, preferredQueue?: Track[]) {
     if (nativeAudio && !batteryPromptShownRef.current) {
       batteryPromptShownRef.current = true;
       void import("./native/ariaShell").then((m) => m.requestUninterruptedPlayback());
@@ -370,8 +375,42 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     const queue = resolveQueueForTrack(trackId, preferredQueue);
     const preferredTarget = preferredQueue?.find((track) => track.id === trackId && track.streamUrl);
     if (preferredQueue && !preferredTarget) return;
-    const targetTrack = preferredTarget ?? queue.find((track) => track.id === trackId) ?? trackById.get(trackId);
+    let targetTrack = preferredTarget ?? queue.find((track) => track.id === trackId) ?? trackById.get(trackId);
     if (!targetTrack?.streamUrl) return;
+
+    // Direct mode: resolve the CDN url at click time — the load layer only
+    // ever sees real urls, so switching is deterministic.
+    if (targetTrack.streamUrl.startsWith("direct:")) {
+      if (choosingRef.current) return;
+      choosingRef.current = true;
+      setPlayNotice("正在获取播放链接…");
+      try {
+        const meta = await resolveDirectStreamUrl(
+          trackId,
+          targetLevelFor(targetTrack, hifiEnabled, qualityLevel),
+        );
+        if (!meta?.url) {
+          setPlayNotice(`「${targetTrack.title}」暂时无法播放`);
+          window.setTimeout(() => setPlayNotice(null), 2600);
+          choosingRef.current = false;
+          pickRelativeTrack(1);
+          return;
+        }
+        applyTrackUpdate(trackId, (track) => ({
+          ...track,
+          streamUrl: meta.url ?? undefined,
+          bitrate: meta.bitrate ?? track.bitrate,
+          sampleRate: meta.sampleRate ?? track.sampleRate,
+          quality: meta.quality ?? track.quality,
+          currentLevel: meta.currentLevel ?? track.currentLevel,
+          availableLevels: meta.availableLevels ?? track.availableLevels,
+        }));
+        targetTrack = { ...targetTrack, streamUrl: meta.url ?? undefined };
+        setPlayNotice(null);
+      } finally {
+        choosingRef.current = false;
+      }
+    }
 
     const playableIds = materializeQueueIds(queue.length ? queue : [targetTrack], trackId, shuffleEnabled);
     if (playableIds.length) setPlayQueueIds(playableIds);
@@ -397,6 +436,11 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     const safeIndex = currentIndex >= 0 ? currentIndex : 0;
     const nextTrack = queue[(safeIndex + direction + queue.length) % queue.length];
     if (!nextTrack?.streamUrl) return;
+    if (nextTrack.streamUrl.startsWith("direct:")) {
+      // Sentinel: let chooseTrack resolve the stream, then switch.
+      void chooseTrack(nextTrack.id, queue);
+      return;
+    }
     if (nextTrack.id === activeTrack.id && audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => setPlaying(false));
@@ -445,6 +489,32 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
   function togglePlayback() {
     if (activeTrack.streamUrl) {
+      if (activeTrack.streamUrl.startsWith("direct:")) {
+        // Boot-restored sentinel: resolve, persist onto the track, then play.
+        setPlayNotice("正在获取播放链接…");
+        void (async () => {
+          const meta = await resolveDirectStreamUrl(
+            activeTrack.id,
+            targetLevelFor(activeTrack, hifiEnabled, qualityLevel),
+          );
+          if (!meta?.url) {
+            setPlayNotice(`「${activeTrack.title}」暂时无法播放`);
+            window.setTimeout(() => setPlayNotice(null), 2600);
+            return;
+          }
+          applyTrackUpdate(activeTrack.id, (track) => ({
+            ...track,
+            streamUrl: meta.url ?? undefined,
+            bitrate: meta.bitrate ?? track.bitrate,
+            sampleRate: meta.sampleRate ?? track.sampleRate,
+            quality: meta.quality ?? track.quality,
+            currentLevel: meta.currentLevel ?? track.currentLevel,
+            availableLevels: meta.availableLevels ?? track.availableLevels,
+          }));
+          setPlaying(true);
+        })();
+        return;
+      }
       setPlaying((value) => !value);
       return;
     }
@@ -541,67 +611,23 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     const loadKey = `${activeTrack.id}|${activeTrack.streamUrl}`;
     if (loadKey === lastNativeLoadRef.current.key && Date.now() - lastNativeLoadRef.current.at < 500) return;
     lastNativeLoadRef.current = { key: loadKey, at: Date.now() };
-    // Stop the previous item right away: the pause/play effect below would
-    // otherwise resume it while the new stream is still being resolved.
-    void AriaAudio.setPaused({ paused: true }).catch(() => undefined);
     resetPlaybackTime();
     setDurationSeconds(0);
-    let cancelled = false;
-    void (async () => {
-      let url: string = playbackStreamUrl(activeTrack, hifiEnabled, qualityLevel) ?? activeTrack.streamUrl ?? "";
-      // Direct mode sentinel: resolve the real CDN url through songUrlV1.
-      if (url.startsWith("direct:")) {
-        const meta = await resolveDirectStreamUrl(activeTrack.id, targetLevelFor(activeTrack, hifiEnabled, qualityLevel));
-        if (cancelled) return;
-        if (!meta?.url) {
-          // VIP/copyright-blocked track: skip forward like the NetEase app,
-          // but bound the chain so a fully blocked queue cannot spin.
-          if (skipGuardRef.current < 8) {
-            skipGuardRef.current += 1;
-            setPlayNotice(`「${activeTrack.title}」暂时无法播放,已自动切下一首`);
-            window.setTimeout(() => setPlayNotice(null), 2600);
-            pickRelativeTrack(1);
-          } else {
-            skipGuardRef.current = 0;
-            setPlaying(false);
-            setPlayNotice("连续多首无法播放,已停止");
-            window.setTimeout(() => setPlayNotice(null), 3000);
-          }
-          return;
-        }
-        skipGuardRef.current = 0;
-        applyTrackUpdate(activeTrack.id, (track) => ({
-          ...track,
-          streamUrl: meta.url ?? undefined,
-          bitrate: meta.bitrate ?? track.bitrate,
-          sampleRate: meta.sampleRate ?? track.sampleRate,
-          quality: meta.quality ?? track.quality,
-          currentLevel: meta.currentLevel ?? track.currentLevel,
-          availableLevels: meta.availableLevels ?? track.availableLevels,
-        }));
-        url = meta.url;
-      }
-      if (cancelled) return;
-      skipGuardRef.current = 0;
-      const loadUrl: string = url;
-      console.log("[aria] load", activeTrack.id, "->", loadUrl.slice(0, 90));
-      await AriaAudio.load({
-        url: loadUrl,
-        trackId: activeTrack.id,
-        title: activeTrack.title,
-        artist: activeTrack.artist,
-        album: activeTrack.album,
-        artworkUrl: activeTrack.coverUrl ?? (activeTrack.cover.startsWith("http") ? activeTrack.cover : undefined),
-        paused: !playing,
-        volume: Math.min(1, Math.max(0, volume / 100)),
-      }).catch(() => setPlaying(false));
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // `playing`/`volume` intentionally read once here; dedicated effects sync
-    // later changes so a track switch does not restart playback.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Boot-restored tracks still carry the direct: sentinel — they stay
+    // unloaded until the user taps play (which resolves first).
+    if (activeTrack.streamUrl.startsWith("direct:")) return;
+    // Streams are resolved at click time (chooseTrack) — this effect only
+    // forwards an already-real url to the native player.
+    void AriaAudio.load({
+      url: activeTrack.streamUrl,
+      trackId: activeTrack.id,
+      title: activeTrack.title,
+      artist: activeTrack.artist,
+      album: activeTrack.album,
+      artworkUrl: activeTrack.coverUrl ?? (activeTrack.cover.startsWith("http") ? activeTrack.cover : undefined),
+      paused: !playing,
+      volume: Math.min(1, Math.max(0, volume / 100)),
+    }).catch(() => setPlaying(false));
   }, [nativeAudio, activeTrack.id, activeTrack.streamUrl]);
 
   useEffect(() => {
@@ -669,6 +695,18 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       }
       if (event.kind === "error") {
         setPlaying(false);
+        // Expired/403 CDN url (or network loss): skip forward like the NetEase
+        // app does, bounded so a dead network cannot spin the queue.
+        if (skipGuardRef.current < 8) {
+          skipGuardRef.current += 1;
+          setPlayNotice("该歌曲播放失败,已自动切下一首");
+          window.setTimeout(() => setPlayNotice(null), 2600);
+          pickRelativeTrack(1);
+        } else {
+          skipGuardRef.current = 0;
+          setPlayNotice("连续多首播放失败,已停止");
+          window.setTimeout(() => setPlayNotice(null), 3000);
+        }
       }
     };
     const subscription = AriaAudio.addListener("audioEvent", handleEvent);
@@ -812,6 +850,14 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       outputMode: "system",
     });
   }, [hifiEnabled]);
+
+  // First paint: restore the cached account so the header shows the logged-in
+  // user instantly instead of flashing "晚上好" for ~3 seconds.
+  useEffect(() => {
+    const cached = cachedDirectAccount();
+    if (cached) netease.setNeteaseAccount(cached);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Seed the pools from the last successful refresh so the home screen is
   // never empty on relaunch. When the cache is fresh (same day) the boot

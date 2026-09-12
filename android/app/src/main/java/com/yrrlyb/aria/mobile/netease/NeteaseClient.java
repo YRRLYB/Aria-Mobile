@@ -289,7 +289,9 @@ public final class NeteaseClient {
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "songUrlV1 build failed");
         }
-        return NeteaseHttp.cachedRequest(context, "url:" + songId + ":" + level, 25 * 60_000L,
+        // CDN urls expire within minutes — a long cache replays dead links
+        // (ExoPlayer "Source error"). Keep resolved urls for 90 seconds only.
+        return NeteaseHttp.cachedRequest(context, "url:" + songId + ":" + level, 90_000L,
                 "/api/song/enhance/player/url/v1", data, "eapi");
     }
 

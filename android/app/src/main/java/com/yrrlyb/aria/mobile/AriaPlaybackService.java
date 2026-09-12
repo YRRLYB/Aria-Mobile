@@ -78,10 +78,14 @@ public class AriaPlaybackService extends MediaSessionService {
         }
 
         @Override
-        public void onIsPlayingChanged(boolean isPlaying) {
-            android.util.Log.i("AriaPlayback", "playing=" + isPlaying + " trackId=" + currentTrackId());
+        public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+            // Report the playback INTENT (playWhenReady), not isPlaying():
+            // buffering also makes isPlaying false, and mirroring that to JS
+            // made the web layer pause the player mid-buffer — tracks then
+            // never started after switching.
+            android.util.Log.i("AriaPlayback", "playWhenReady=" + playWhenReady + " trackId=" + currentTrackId());
             Map<String, Object> event = baseEvent("state");
-            event.put("playing", isPlaying);
+            event.put("playing", playWhenReady);
             emit(event);
         }
 
