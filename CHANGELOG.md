@@ -1,5 +1,11 @@
 # 更新记录
 
+## 0.3.2-beta.0(修复启动闪退)
+
+- 修复启动闪退:首次进入 onResume 时 WebView 尚未挂载,`getRootWindowInsets()` 返回 null 导致 NPE(崩溃日志已由用户端黑匣子捕获确认)。现在挂载前跳过、由后续 inset 回调补发。
+- 新增启动崩溃黑匣子:任何启动异常写入 Android/data/com.yrrlyb.aria.mobile/files/crash/last-crash.txt。
+- 播放/状态栏/队列/手机音乐等 0.3.0 全部功能保留。
+
 ## 0.3.0-beta.0(体验大版本)
 
 - 修复切歌竞态:切歌瞬间先暂停旧流再解析新流,连续点歌不再"还是那一首";无缝预加载的哨兵地址也会先解析成真实链接。

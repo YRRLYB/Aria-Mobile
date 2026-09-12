@@ -68,13 +68,24 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
-        pushCurrentInsets();
+        try {
+            pushCurrentInsets();
+        } catch (Throwable ignored) {
+            // never block resume; the inset listener re-pushes later
+        }
     }
 
     private void pushCurrentInsets() {
         if (getBridge() == null || getBridge().getWebView() == null) return;
+        android.view.View view = getBridge().getWebView();
+        // On the first resume the WebView is not attached to a window yet and
+        // getRootWindowInsets() returns null — skip; the inset listener and
+        // the later re-pushes cover it once attachment happens.
+        if (!view.isAttachedToWindow()) return;
+        android.view.WindowInsets rootInsets = view.getRootWindowInsets();
+        if (rootInsets == null) return;
         androidx.core.graphics.Insets insets = androidx.core.view.WindowInsetsCompat
-                .toWindowInsetsCompat(getBridge().getWebView().getRootWindowInsets())
+                .toWindowInsetsCompat(rootInsets)
                 .getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()
                         | androidx.core.view.WindowInsetsCompat.Type.displayCutout());
         String script = "window.__ariaSafeTop=" + insets.top + ";window.__ariaSafeBottom=" + insets.bottom + ";"
