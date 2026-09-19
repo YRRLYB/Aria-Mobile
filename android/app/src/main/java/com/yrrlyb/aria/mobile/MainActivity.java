@@ -1,6 +1,7 @@
 package com.yrrlyb.aria.mobile;
 
 import android.os.Bundle;
+import android.graphics.Color;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
@@ -35,6 +36,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AriaShellPlugin.class);
         registerPlugin(com.yrrlyb.aria.mobile.netease.NeteaseDirectPlugin.class);
         super.onCreate(savedInstanceState);
+        getBridge().getWebView().setBackgroundColor(Color.rgb(247, 248, 251));
 
         // True immersive layout: pages paint behind the status bar / gesture
         // bar, and the safe-area sizes are injected as CSS variables so the

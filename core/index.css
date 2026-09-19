@@ -30,6 +30,67 @@ body {
   min-height: 100vh;
   margin: 0;
   overflow-x: hidden;
+  background: var(--page);
+}
+
+#root {
+  min-height: 100%;
+  background: var(--page);
+}
+
+@supports not (background: color-mix(in srgb, black 50%, white)) {
+  .player-orbit {
+    border-color: rgba(123, 132, 148, 0.55);
+  }
+
+  .player-orbit::after {
+    border-color: rgba(123, 132, 148, 0.34);
+  }
+
+  .player-glow {
+    background: rgba(123, 132, 148, 0.58);
+  }
+
+  .player-control-button:hover::before,
+  .player-control-button:focus-visible::before {
+    border-color: rgba(123, 132, 148, 0.48);
+  }
+
+  .player-control-button:focus-visible,
+  .player-play-button:focus-visible {
+    outline-color: #596476;
+  }
+
+  .player-control-button.is-active {
+    color: #596476;
+    background: rgba(123, 132, 148, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(123, 132, 148, 0.24);
+  }
+}
+
+/* Tailwind v4 emits oklch theme tokens. Older Android WebView versions
+   ignore those variables entirely, which makes text and solid controls look
+   missing even though the layout is present. Keep the same neutral palette
+   available as plain sRGB values. */
+@supports not (color: oklch(0% 0 0)) {
+  :root {
+    --color-red-600: #dc2626;
+    --color-amber-50: #fffbeb;
+    --color-amber-600: #d97706;
+    --color-amber-700: #b45309;
+    --color-emerald-400: #34d399;
+    --color-emerald-600: #059669;
+    --color-rose-50: #fff1f2;
+    --color-rose-500: #f43f5e;
+    --color-rose-600: #e11d48;
+    --color-neutral-200: #e5e5e5;
+    --color-neutral-300: #d4d4d4;
+    --color-neutral-400: #a3a3a3;
+    --color-neutral-500: #737373;
+    --color-neutral-600: #525252;
+    --color-neutral-700: #404040;
+    --color-neutral-950: #171717;
+  }
 }
 
 button,

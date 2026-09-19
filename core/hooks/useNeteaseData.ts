@@ -20,19 +20,23 @@ export function useNeteaseData(options: {
   getActiveTrack: () => Track;
   shuffleEnabled: boolean;
   setPlayQueueIds: (updater: (ids: string[]) => string[]) => void;
+  initial?: { liked: Track[]; daily: Track[]; roam: Track[]; playlists: ProviderPlaylist[] };
+  initialAccount?: NeteaseAccountSummary | null;
 }) {
   const { applyTrackUpdate } = options;
-  const [neteaseAccount, setNeteaseAccount] = useState<NeteaseAccountSummary | null>(null);
+  const [neteaseAccount, setNeteaseAccount] = useState<NeteaseAccountSummary | null>(options.initialAccount ?? null);
   const [neteaseTracks, setNeteaseTracks] = useState<Track[]>([]);
-  const [neteaseLikedTracks, setNeteaseLikedTracks] = useState<Track[]>([]);
-  const [dailyTracks, setDailyTracks] = useState<Track[]>([]);
-  const [roamTracks, setRoamTracks] = useState<Track[]>([]);
+  const [neteaseLikedTracks, setNeteaseLikedTracks] = useState<Track[]>(options.initial?.liked ?? []);
+  const [dailyTracks, setDailyTracks] = useState<Track[]>(options.initial?.daily ?? []);
+  const [roamTracks, setRoamTracks] = useState<Track[]>(options.initial?.roam ?? []);
   const [playlistTracks, setPlaylistTracks] = useState<Track[]>([]);
-  const [neteaseLikedIds, setNeteaseLikedIds] = useState<Record<string, true>>({});
+  const [neteaseLikedIds, setNeteaseLikedIds] = useState<Record<string, true>>(() => Object.fromEntries((options.initial?.liked ?? []).map((t) => [t.id, true])));
   const [selectedPlaylist, setSelectedPlaylist] = useState<ProviderPlaylist | null>(null);
   const [playlistLoading, setPlaylistLoading] = useState(false);
   const [roamRefreshing, setRoamRefreshing] = useState(false);
-  const [providerPlaylists, setProviderPlaylists] = useState<ProviderPlaylist[]>([]);
+  const [providerPlaylists, setProviderPlaylists] = useState<ProviderPlaylist[]>(options.initial?.playlists ?? []);
+  const [likedComplete, setLikedComplete] = useState(false);
+  const roamBusyRef = useRef(false);
   const neteaseWarmupRef = useRef<Set<string>>(new Set());
 
   function providerIdsForTracks(tracksToRead: Track[]) {
@@ -140,10 +144,13 @@ export function useNeteaseData(options: {
       : [];
     const merged = mergeTracks([...dailyUiTracks, ...roamUiTracks, ...likedUiTracks]);
 
-    setDailyTracks(dailyUiTracks);
-    setRoamTracks(roamUiTracks);
-    setNeteaseLikedTracks(likedUiTracks);
-    setNeteaseLikedIds(Object.fromEntries(likedUiTracks.map((track) => [track.id, true])));
+    if (daily) setDailyTracks(dailyUiTracks);
+    if (roam) setRoamTracks(roamUiTracks);
+    if (liked) {
+      setNeteaseLikedTracks(likedUiTracks);
+      setNeteaseLikedIds(Object.fromEntries(likedUiTracks.map((track) => [track.id, true])));
+      setLikedComplete(true);
+    }
     setNeteaseTracks(trimTrackCache(merged));
     if (playlists) setProviderPlaylists(playlists.playlists);
     warmNeteaseTrackCache(merged);
@@ -152,8 +159,22 @@ export function useNeteaseData(options: {
     }
   }
 
-  async function refreshRoamData() {
-    if (roamRefreshing) return;
+  async function refreshLikedData() {
+    const liked = await api.getProviderLiked();
+    const tracks = liked.tracks.map(providerTrackToUiTrack);
+    setNeteaseLikedTracks(tracks);
+    setNeteaseLikedIds(Object.fromEntries(tracks.map((track) => [track.id, true])));
+    setLikedComplete(true);
+  }
+
+  async function refreshDailyData() {
+    const daily = await api.getProviderDaily();
+    setDailyTracks(daily.tracks.map(providerTrackToUiTrack));
+  }
+
+  async function refreshRoamData(append = false) {
+    if (roamBusyRef.current) return;
+    roamBusyRef.current = true;
     setRoamRefreshing(true);
     try {
       const currentSignature = trackIdSignature(roamTracks);
@@ -172,7 +193,7 @@ export function useNeteaseData(options: {
       }
 
       if (!nextRoamTracks.length) return;
-      setRoamTracks(nextRoamTracks);
+      setRoamTracks((current) => append ? mergeTracks([...current, ...nextRoamTracks]) : nextRoamTracks);
       setNeteaseTracks((current) => trimTrackCache([...current, ...nextRoamTracks]));
       warmNeteaseTrackCache(nextRoamTracks);
 
@@ -186,6 +207,7 @@ export function useNeteaseData(options: {
         if (playableIds.length) options.setPlayQueueIds(() => playableIds);
       }
     } finally {
+      roamBusyRef.current = false;
       setRoamRefreshing(false);
     }
   }
@@ -286,10 +308,14 @@ export function useNeteaseData(options: {
     playlistLoading,
     roamRefreshing,
     neteaseLikedIds,
+    setNeteaseLikedIds,
     neteaseWarmupRef,
     applyStreamMetaToTrack,
     warmNeteaseTrackCache,
     refreshNeteaseData,
+    refreshLikedData,
+    refreshDailyData,
+    likedComplete,
     refreshRoamData,
     openPlaylist,
     toggleNeteaseLike,

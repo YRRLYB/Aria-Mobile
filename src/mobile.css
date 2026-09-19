@@ -12,10 +12,24 @@ body {
 }
 
 #root {
+  height: 100vh;
   height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Older Android System WebView builds do not parse dvh. Keep the shell
+   painted while the modern viewport unit is unavailable. */
+@supports not (height: 100dvh) {
+  #root {
+    height: 100vh;
+  }
+}
+
+.aria-app-shell {
+  min-height: 100%;
+  background-color: #f7f8fb;
 }
 
 .no-scrollbar {

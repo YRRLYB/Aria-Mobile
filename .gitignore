@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.apk
+*.apk.idsig
 android/.gradle/
 android/app/build/
 android/build/

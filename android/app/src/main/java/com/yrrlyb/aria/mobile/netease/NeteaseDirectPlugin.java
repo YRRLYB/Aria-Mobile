@@ -40,15 +40,16 @@ public class NeteaseDirectPlugin extends Plugin {
         executor.execute(() -> {
             try {
                 JSONObject keyBody = NeteaseClient.loginQrKey(getContext());
-                String unikey = keyBody.optJSONObject("data") != null
-                        ? keyBody.optJSONObject("data").optString("unikey", "")
-                        : "";
+                JSONObject data = keyBody.optJSONObject("data");
+                String unikey = data != null ? data.optString("unikey", data.optString("key", "")) : "";
+                if (unikey.isEmpty()) unikey = keyBody.optString("unikey", keyBody.optString("key", ""));
                 JSObject result = new JSObject();
                 result.put("ok", !unikey.isEmpty());
                 result.put("key", unikey);
                 result.put("qrUrl", "https://music.163.com/login?codekey=" + unikey);
                 call.resolve(result);
-            } catch (Exception error) {
+            } catch (Throwable error) {
+                android.util.Log.e("NeteaseDirect", "loginQrStart crashed", error);
                 call.reject("loginQrStart failed", String.valueOf(error.getMessage()));
             }
         });
@@ -66,13 +67,17 @@ public class NeteaseDirectPlugin extends Plugin {
                 NeteaseClient.QrCheckResult result = NeteaseClient.loginQrCheck(getContext(), key);
                 JSObject out = new JSObject();
                 out.put("code", result.code);
-                out.put("loggedIn", result.code == 803);
+                boolean loggedIn = result.code == 803 && NeteaseSession.isLoggedIn(getContext());
+                out.put("loggedIn", loggedIn);
+                out.put("message", loggedIn ? "登录成功" : result.code == 803
+                        ? "二维码已确认,但登录凭据未保存,请重新生成二维码后重试" : "");
                 if (result.code == 803) {
                     out.put("nickname", NeteaseSession.nickname(getContext()));
                     out.put("avatarUrl", NeteaseSession.avatarUrl(getContext()));
                 }
                 call.resolve(out);
-            } catch (Exception error) {
+            } catch (Throwable error) {
+                android.util.Log.e("NeteaseDirect", "loginQrCheck crashed", error);
                 call.reject("loginQrCheck failed", String.valueOf(error.getMessage()));
             }
         });
@@ -101,8 +106,14 @@ public class NeteaseDirectPlugin extends Plugin {
                     result.put("avatarUrl", NeteaseSession.avatarUrl(getContext()));
                 }
                 call.resolve(result);
-            } catch (Exception error) {
-                call.reject("登录失败", String.valueOf(error.getMessage()));
+            } catch (Throwable error) {
+                android.util.Log.e("NeteaseDirect", "loginCellphone crashed", error);
+                JSObject result = new JSObject();
+                result.put("ok", false);
+                result.put("code", error instanceof NeteaseHttp.NeteaseException
+                        ? ((NeteaseHttp.NeteaseException) error).code : 502);
+                result.put("message", error.getMessage() == null ? "登录失败" : error.getMessage());
+                call.resolve(result);
             }
         });
     }
@@ -124,8 +135,14 @@ public class NeteaseDirectPlugin extends Plugin {
                 result.put("code", code);
                 result.put("message", code == 200 ? "验证码已发送" : body.optString("message", body.optString("msg", "发送失败(" + code + ")")));
                 call.resolve(result);
-            } catch (Exception error) {
-                call.reject("发送验证码失败", String.valueOf(error.getMessage()));
+            } catch (Throwable error) {
+                android.util.Log.e("NeteaseDirect", "captchaSent crashed", error);
+                JSObject result = new JSObject();
+                result.put("ok", false);
+                result.put("code", error instanceof NeteaseHttp.NeteaseException
+                        ? ((NeteaseHttp.NeteaseException) error).code : 502);
+                result.put("message", error.getMessage() == null ? "发送验证码失败" : error.getMessage());
+                call.resolve(result);
             }
         });
     }
@@ -170,6 +187,8 @@ public class NeteaseDirectPlugin extends Plugin {
         switch (endpoint) {
             case "userAccount":
                 return NeteaseClient.userAccount(getContext());
+            case "likedSongs":
+                return NeteaseClient.likedSongs(getContext());
             case "likedIds":
                 return NeteaseClient.likedIds(getContext());
             case "dailySongs":

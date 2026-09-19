@@ -121,6 +121,7 @@ export type ApiScannedTrack = {
   size: number;
   bitrate?: number | null;
   sampleRate?: number | null;
+  audioFormat?: string | null;
   bpm?: number | null;
   hasCover?: boolean;
   trackNumber?: number | null;
@@ -158,7 +159,7 @@ export type NeteaseQrStart = {
 
 export type NeteaseQrCheck = {
   code: number;
-  status: "waiting" | "scanned" | "expired" | "success";
+  status: "waiting" | "scanned" | "expired" | "success" | "error";
   message: string;
   account: NeteaseAccountSummary | null;
 };
@@ -177,6 +178,7 @@ export type ProviderTrack = {
   bpm?: number | null;
   bitrate?: number | null;
   sampleRate?: number | null;
+  audioFormat?: string | null;
   currentLevel?: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster" | null;
   availableLevels?: Array<"standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster">;
 };
@@ -313,6 +315,7 @@ export type NeteaseStreamMeta = {
   url: string | null;
   bitrate: number | null;
   sampleRate: number | null;
+  audioFormat?: string | null;
   size: number | null;
   quality: ProviderTrack["quality"];
   currentLevel: ProviderTrack["currentLevel"];
@@ -323,7 +326,7 @@ export type NeteaseDirectProvider = {
   active(): boolean;
   liked(): Promise<{ tracks: ProviderTrack[] }>;
   daily(): Promise<ProviderDailyBundle>;
-  roam(limit: number): Promise<ProviderDailyBundle>;
+  roam(limit: number, options?: { refresh?: boolean; excludeIds?: string[] }): Promise<ProviderDailyBundle>;
   playlists(): Promise<{ playlists: ProviderPlaylist[] }>;
   playlistTracks(playlistId: string): Promise<{ tracks: ProviderTrack[] }>;
   searchTracks(keyword: string, limit: number): Promise<ProviderTrack[]>;
@@ -521,7 +524,7 @@ export const api = {
   },
   getProviderRoam(providerId = "netease", limit = 18, options: { refresh?: boolean; excludeIds?: string[] } = {}) {
     const directProvider = neteaseDirect();
-    if (directProvider) return directProvider.roam(limit);
+    if (directProvider) return directProvider.roam(limit, options);
     const params = new URLSearchParams({ limit: String(limit) });
     if (options.refresh) params.set("refresh", "1");
     if (options.excludeIds?.length) params.set("exclude", options.excludeIds.join(","));
@@ -576,6 +579,7 @@ export const api = {
       url: string | null;
       bitrate: number | null;
       sampleRate: number | null;
+      audioFormat?: string | null;
       size: number | null;
       quality: ProviderTrack["quality"];
       currentLevel: ProviderTrack["currentLevel"];

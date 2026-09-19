@@ -16,13 +16,13 @@ import {
 import { idleTrack } from "@/lib/trackMappers";
 import {
   extractDominantColors,
-  formatBitrate,
-  formatSampleRate,
   getActiveLyricIndex,
   type CoverPalette,
 } from "@/lib/playerPresentation";
 import { TrackCover } from "./Chrome";
 import type { MobileControls } from "./MobileApp";
+import { formatPlaybackQuality } from "./playbackQuality";
+import { useVirtualRows } from "@/lib/virtualRows";
 
 type NowPlayingView = "cover" | "lyrics" | "queue";
 
@@ -108,12 +108,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
   const lyricLines = activeTrack.lyrics ?? [];
   const activeLyricIndex = lyricLines.length ? getActiveLyricIndex(lyricLines, currentTime) : -1;
   const activeLyric = activeLyricIndex >= 0 ? lyricLines[activeLyricIndex]?.text : "";
-  const qualityParts = [
-    activeTrack.quality,
-    formatBitrate(activeTrack.bitrate, true),
-    formatSampleRate(activeTrack.sampleRate, true),
-  ].filter(Boolean);
-  const qualityLabel = qualityParts.join(" · ") || activeTrack.quality;
+  const qualityLabel = formatPlaybackQuality(controls.actualQuality);
 
   return (
     <motion.div
@@ -228,7 +223,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
             {view === "lyrics" && <LyricsView controls={{ ...controls, onLyricsCollapse: () => setView("cover") }} />}
           </div>
         )}
-        <AnimatePresence>{view === "queue" && <QueueSheet controls={controls} />}</AnimatePresence>
+        <AnimatePresence>{view === "queue" && <QueueSheet controls={controls} onClose={() => setView("cover")} />}</AnimatePresence>
 
         {view !== "queue" && (
           <div className="px-6 pb-1 pt-3">
@@ -268,9 +263,10 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
           />
           <div className="-mx-1 mt-1 flex items-center justify-between text-[11px] tabular-nums text-white/45">
             <span className="min-w-10 text-left">{formatClock(currentTime)}</span>
-            <span className="truncate px-2 text-white/35">{qualityLabel}</span>
             <span className="min-w-10 text-right">{formatClock(durationSeconds)}</span>
           </div>
+
+          <p data-testid="actual-audio-quality" className="mt-1 min-h-8 break-words text-center text-[11px] leading-4 text-white/60">{qualityLabel}</p>
 
           <div className="mt-5 flex items-center justify-between">
             <button
@@ -344,7 +340,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
 }
 
 function LyricsView({ controls }: { controls: MobileControls }) {
-  const { activeTrack, currentTime } = controls;
+  const { activeTrack, currentTime, onLyricsCollapse } = controls;
   const lyrics = activeTrack.lyrics ?? [];
   const activeIndex = useMemo(() => getActiveLyricIndex(lyrics, currentTime), [lyrics, currentTime]);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -354,10 +350,8 @@ function LyricsView({ controls }: { controls: MobileControls }) {
     if (!container) return;
     const activeLine = container.querySelector<HTMLElement>(`[data-line="${activeIndex}"]`);
     if (activeLine) {
-      container.scrollTo({
-        top: activeLine.offsetTop - container.clientHeight / 2,
-        behavior: "smooth",
-      });
+      const target = activeLine.offsetTop - container.clientHeight / 2 + activeLine.clientHeight / 2;
+      container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
     }
   }, [activeIndex]);
 
@@ -372,13 +366,20 @@ function LyricsView({ controls }: { controls: MobileControls }) {
   }
 
   return (
-    <div ref={containerRef} className="no-scrollbar min-h-0 flex-1 overflow-y-auto py-[38%]">
+      <div
+        ref={containerRef}
+        onClick={onLyricsCollapse}
+        className="no-scrollbar min-h-0 flex-1 overflow-y-auto py-[38%]"
+        role="button"
+        tabIndex={0}
+        aria-label="收起歌词"
+      >
       {lyrics.map((line, index) => (
         <p
           key={`${line.time}-${index}`}
           data-line={index}
-          className={`px-8 py-2.5 text-center text-[1.05rem] leading-8 transition-all duration-300 ${
-            index === activeIndex ? "font-semibold text-white" : "text-white/35"
+          className={`px-8 py-2.5 text-center text-[1.05rem] leading-8 transition-all duration-500 ${
+            index === activeIndex ? "scale-[1.04] font-semibold text-white" : "text-white/35"
           }`}
         >
           {line.text}
@@ -389,46 +390,66 @@ function LyricsView({ controls }: { controls: MobileControls }) {
   );
 }
 
-function QueueSheet({ controls }: { controls: MobileControls }) {
+function QueueSheet({ controls, onClose }: { controls: MobileControls; onClose: () => void }) {
   const { activeTrack, playQueueTracks, chooseTrack } = controls;
+  const { containerRef, rows, totalHeight } = useVirtualRows({
+    count: playQueueTracks.length,
+    rowHeight: 68,
+    overscan: 8,
+  });
   return (
     <motion.div
-      initial={{ y: "100%" }}
-      animate={{ y: 0 }}
-      exit={{ y: "100%" }}
-      transition={{ type: "spring", stiffness: 320, damping: 34 }}
-      className="safe-bottom absolute inset-x-0 bottom-0 top-16 z-20 flex min-h-0 flex-col rounded-t-[1.6rem] border-t border-white/10 bg-[#0c0c0f]/97 px-4 pt-4 backdrop-blur-xl"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.16, ease: "easeOut" }}
+      className="fixed inset-0 z-20 bg-black/20"
+      onClick={onClose}
     >
-      <div className="flex items-center justify-between pb-3">
-        <p className="text-sm font-semibold text-white/80">当前队列 · {playQueueTracks.length} 首</p>
-        <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
-          {controls.repeatMode === "one" ? <Repeat1 className="size-3.5" /> : <Repeat className="size-3.5" />}
-          {controls.repeatMode === "one" ? "单曲循环" : "列表循环"}
-        </span>
-      </div>
-      <div className="no-scrollbar min-h-0 flex-1 space-y-0.5 overflow-y-auto pb-4">
-        {playQueueTracks.map((track) => (
-          <button
-            key={track.id}
-            type="button"
-            onClick={() => chooseTrack(track.id, playQueueTracks)}
-            className={`tap-scale flex w-full items-center gap-3 rounded-[0.9rem] px-2 py-2.5 text-left transition ${
-              track.id === activeTrack.id ? "bg-white/10" : "active:bg-white/[0.06]"
-            }`}
-          >
-            <TrackCover track={track} className="size-9 shrink-0 rounded-[0.55rem]" />
-            <span className="min-w-0 flex-1">
-              <span
-                className={`block truncate text-sm ${track.id === activeTrack.id ? "font-semibold text-white" : "text-white/85"}`}
-              >
-                {track.title}
-              </span>
-              <span className="mt-0.5 block truncate text-xs text-white/45">{track.artist}</span>
-            </span>
-            <span className="shrink-0 text-xs tabular-nums text-white/35">{track.duration}</span>
-          </button>
-        ))}
-      </div>
+      <motion.div
+        initial={{ y: "7%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "7%" }}
+        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        onClick={(event) => event.stopPropagation()}
+        className="safe-bottom absolute inset-x-0 bottom-0 top-[11%] flex min-h-0 flex-col rounded-t-[1.35rem] border-t border-white/10 bg-[#0c0c0f]/97 px-4 pt-4 text-white backdrop-blur-xl"
+      >
+        <div className="flex items-center justify-between pb-3">
+          <p className="text-sm font-semibold text-white/80">当前队列 · {playQueueTracks.length} 首</p>
+          <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+            {controls.repeatMode === "one" ? <Repeat1 className="size-3.5" /> : <Repeat className="size-3.5" />}
+            {controls.repeatMode === "one" ? "单曲循环" : "列表循环"}
+          </span>
+        </div>
+        <div ref={containerRef} className="no-scrollbar min-h-0 flex-1 overflow-y-auto pb-4">
+          <div className="relative" style={{ height: totalHeight }}>
+            {rows.map(({ index, offsetTop }) => {
+              const track = playQueueTracks[index];
+              if (!track) return null;
+              return (
+                <button
+                  key={track.id}
+                  type="button"
+                  style={{ transform: `translateY(${offsetTop}px)` }}
+                  onClick={() => { void chooseTrack(track.id, playQueueTracks); onClose(); }}
+                  className={`tap-scale absolute inset-x-0 top-0 flex h-16 items-center gap-3 rounded-[0.9rem] px-2 text-left transition ${
+                    track.id === activeTrack.id ? "bg-white/10" : "active:bg-white/[0.06]"
+                  }`}
+                >
+                  <TrackCover track={track} className="size-9 shrink-0 rounded-[0.55rem]" />
+                  <span className="min-w-0 flex-1">
+                    <span className={`block truncate text-sm ${track.id === activeTrack.id ? "font-semibold text-white" : "text-white/85"}`}>
+                      {track.title}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-white/45">{track.artist}</span>
+                  </span>
+                  <span className="shrink-0 text-xs tabular-nums text-white/35">{track.duration}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </motion.div>
     </motion.div>
   );
 }

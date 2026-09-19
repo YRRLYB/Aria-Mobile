@@ -59,10 +59,6 @@ export async function requestAudioPermission(): Promise<boolean> {
 
 export async function scanDeviceAudio(): Promise<DeviceAudioTrack[]> {
   if (!Capacitor.isNativePlatform()) return [];
-  try {
-    const { tracks } = await AriaShell.scanLocalAudio();
-    return tracks ?? [];
-  } catch {
-    return [];
-  }
+  const { tracks } = await AriaShell.scanLocalAudio();
+  return tracks ?? [];
 }

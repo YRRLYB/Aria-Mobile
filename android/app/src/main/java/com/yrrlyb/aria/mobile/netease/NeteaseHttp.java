@@ -93,6 +93,7 @@ public final class NeteaseHttp {
         String body;
 
         if ("weapi".equals(crypto)) {
+            headers.put("Cookie", cookieHeader(cookieMap));
             headers.put("Referer", DOMAIN);
             headers.put("User-Agent", UA_WEAPI);
             try {
@@ -141,16 +142,33 @@ public final class NeteaseHttp {
      * keeping only real name=value pairs (drops Path/Domain/Expires attrs).
      */
     public static String cookieFromLastResponse() {
-        StringBuilder out = new StringBuilder();
+        java.util.LinkedHashMap<String, String> cookies = new java.util.LinkedHashMap<>();
         for (String setCookie : lastSetCookies) {
+            if (setCookie == null) continue;
             String pair = setCookie.split(";", 2)[0].trim();
-            if (!pair.contains("=")) continue;
-            String name = pair.substring(0, pair.indexOf('=')).trim();
+            int equals = pair.indexOf('=');
+            if (equals <= 0) continue;
+            String name = pair.substring(0, equals).trim();
             if (name.isEmpty()) continue;
+            cookies.put(name, pair.substring(equals + 1).trim());
+        }
+        StringBuilder out = new StringBuilder();
+        for (Map.Entry<String, String> entry : cookies.entrySet()) {
             if (out.length() > 0) out.append("; ");
-            out.append(pair);
+            out.append(entry.getKey()).append('=').append(entry.getValue());
         }
         return out.toString();
+    }
+
+    private static java.util.List<String> responseCookies(Map<String, java.util.List<String>> headers) {
+        java.util.ArrayList<String> cookies = new java.util.ArrayList<>();
+        if (headers == null) return cookies;
+        for (Map.Entry<String, java.util.List<String>> entry : headers.entrySet()) {
+            String name = entry.getKey();
+            if (name == null || !("set-cookie".equalsIgnoreCase(name) || "set-cookie2".equalsIgnoreCase(name))) continue;
+            if (entry.getValue() != null) cookies.addAll(entry.getValue());
+        }
+        return cookies;
     }
 
     private static JSONObject post(String url, String body, Map<String, String> headers) throws NeteaseException {
@@ -170,8 +188,7 @@ public final class NeteaseHttp {
                 out.write(payload);
             }
 
-            java.util.List<String> setCookies = connection.getHeaderFields().get("Set-Cookie");
-            lastSetCookies = setCookies == null ? java.util.List.of() : setCookies;
+            lastSetCookies = responseCookies(connection.getHeaderFields());
             int status = connection.getResponseCode();
             InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
             String text = readAll(stream);
@@ -279,7 +296,10 @@ public final class NeteaseHttp {
 
     private static String urlEncode(String value) {
         try {
-            return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8);
+            // The Charset overload is unavailable on Android 11 / API 30.
+            // Use the String charset-name overload, which is available on all
+            // supported Android versions.
+            return java.net.URLEncoder.encode(value, "UTF-8");
         } catch (Exception error) {
             return value;
         }

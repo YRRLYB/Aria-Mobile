@@ -1,15 +1,20 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 
 export type AriaAudioEvent = {
-  kind: "loaded" | "progress" | "state" | "advanced" | "ended" | "error";
+  kind: "loaded" | "progress" | "state" | "advanced" | "ended" | "error" | "next" | "previous" | "like";
   trackId?: string;
+  requestId?: string;
   position?: number;
   duration?: number;
   playing?: boolean;
   message?: string;
+  audioFormat?: string;
+  bitrate?: number;
+  sampleRate?: number;
 };
 
 export type AriaAudioLoadPayload = {
+  requestId: string;
   url: string;
   trackId: string;
   title: string;
@@ -21,9 +26,16 @@ export type AriaAudioLoadPayload = {
   volume?: number;
 };
 
+export type UsbExclusiveSettings = {
+  enabled: boolean;
+  connected: boolean;
+  supported: boolean;
+};
+
 export type AriaAudioPluginInterface = {
   load(payload: AriaAudioLoadPayload): Promise<void>;
   loadNext(payload: {
+    requestId: string;
     url: string;
     trackId: string;
     title: string;
@@ -37,6 +49,13 @@ export type AriaAudioPluginInterface = {
   stop(): Promise<void>;
   getState(): Promise<{ active: boolean; position: number; duration: number; paused: boolean; trackId: string | null }>;
   requestNotifications(): Promise<{ granted?: boolean }>;
+  getUsbExclusiveSettings(): Promise<UsbExclusiveSettings>;
+  setUsbExclusiveEnabled(options: { enabled: boolean }): Promise<UsbExclusiveSettings>;
+  updateLockInfo(options: { trackId: string; lyrics: { time: string; text: string; translation?: string }[]; liked: boolean }): Promise<void>;
+  getLockScreenSettings(): Promise<{ enabled: boolean; permission: boolean }>;
+  setLockScreenEnabled(options: { enabled: boolean }): Promise<void>;
+  openLockScreenPermission(): Promise<void>;
+  openLockScreenAppSettings(): Promise<void>;
   addListener(
     eventName: "audioEvent",
     listener: (event: AriaAudioEvent) => void,

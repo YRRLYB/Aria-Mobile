@@ -2,6 +2,13 @@ package com.yrrlyb.aria.mobile;
 
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioDeviceInfo;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
+import android.content.IntentFilter;
+import android.content.BroadcastReceiver;
+import android.app.KeyguardManager;
+import android.provider.Settings;
 import android.content.pm.ServiceInfo;
 import android.net.Uri;
 import android.os.Build;
@@ -18,6 +25,8 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.ForwardingPlayer;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.session.MediaSession;
 import androidx.media3.session.MediaSessionService;
@@ -51,8 +60,10 @@ public class AriaPlaybackService extends MediaSessionService {
 
     private static volatile AriaPlaybackService instance;
     private static volatile EventSink eventSink;
+    private static volatile boolean requestedUsbExclusive = false;
 
     private ExoPlayer player;
+    private AudioBitrateMeter bitrateMeter = new AudioBitrateMeter();
     private MediaSession session;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     // True while our placeholder notification owns the foreground slot. The
@@ -62,15 +73,57 @@ public class AriaPlaybackService extends MediaSessionService {
     // on the LOAD intent and hand the slot back once media3's media
     // notification can take over (playback READY).
     private boolean tempForeground = false;
+    private boolean usbExclusiveEnabled = false;
+    private AudioFocusRequest usbFocusRequest;
+    private final AudioManager.OnAudioFocusChangeListener usbFocusListener = focusChange -> {
+        if (focusChange == AudioManager.AUDIOFOCUS_LOSS) usbExclusiveEnabled = false;
+    };
+    private boolean lockScreenArmed;
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                lockScreenArmed = player != null && player.getPlayWhenReady() && player.getCurrentMediaItem() != null;
+                if (lockScreenArmed) showMusicLockScreen();
+            } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
+                KeyguardManager keyguard = getSystemService(KeyguardManager.class);
+                if (lockScreenArmed && keyguard != null && keyguard.isKeyguardLocked()) showMusicLockScreen();
+            } else if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) {
+                lockScreenArmed = false;
+                LockPlayerActivity.dismiss();
+            }
+        }
+    };
+
+    private void showMusicLockScreen() {
+        if (!getSharedPreferences("aria-lock-screen", MODE_PRIVATE).getBoolean("enabled", false)) return;
+        if (!Settings.canDrawOverlays(this)) return;
+        AudioManager audio = getSystemService(AudioManager.class);
+        if (audio != null && audio.getMode() != AudioManager.MODE_NORMAL) return;
+        if (LockPlayerActivity.isVisible()) return;
+        try {
+            startActivity(new Intent(this, LockPlayerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+        } catch (RuntimeException error) {
+            android.util.Log.w("AriaLockScreen", "Unable to show music lock screen", error);
+        }
+    }
 
     private final Player.Listener playerListener = new Player.Listener() {
         @Override
         public void onPlaybackStateChanged(int playbackState) {
             if (playbackState == Player.STATE_READY) {
-                releaseTempForeground();
+                // Media3 owns this service's foreground state now. Calling
+                // stopForeground here also removes its actual media card.
+                if (session != null) onUpdateNotification(session, player.getPlayWhenReady());
+                mainHandler.postDelayed(() -> {
+                    NotificationManager manager = getSystemService(NotificationManager.class);
+                    if (manager != null) manager.cancel(TEMP_NOTIFICATION_ID);
+                    tempForeground = false;
+                }, 500);
                 Map<String, Object> event = baseEvent("loaded");
                 event.put("duration", safeDuration());
                 event.put("position", safePosition());
+                appendAudioFormat(event);
                 emit(event);
             } else if (playbackState == Player.STATE_ENDED) {
                 emit(baseEvent("ended"));
@@ -91,7 +144,7 @@ public class AriaPlaybackService extends MediaSessionService {
 
         @Override
         public void onMediaItemTransition(MediaItem mediaItem, int reason) {
-            if (mediaItem == null) return;
+            if (mediaItem == null || reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) return;
             // AUTO = gapless advance to the item appended via loadNext();
             // the JS layer adopts the new track id so queue UI follows.
             Map<String, Object> event = baseEvent("advanced");
@@ -117,6 +170,7 @@ public class AriaPlaybackService extends MediaSessionService {
                 Map<String, Object> event = baseEvent("progress");
                 event.put("position", safePosition());
                 event.put("duration", safeDuration());
+                if (activePlayer.getPlaybackState() == Player.STATE_READY) appendAudioFormat(event);
                 emit(event);
                 mainHandler.postDelayed(this, 500);
             }
@@ -135,6 +189,10 @@ public class AriaPlaybackService extends MediaSessionService {
                 .setAudioAttributes(audioAttributes, true)
                 .setHandleAudioBecomingNoisy(true)
                 .setWakeMode(C.WAKE_MODE_NETWORK)
+                .setLoadControl(new DefaultLoadControl.Builder()
+                        .setBufferDurationsMs(40_000, 120_000, 1_500, 5_000)
+                        .setPrioritizeTimeOverSizeThresholds(true)
+                        .build())
                 .build();
         player.addListener(playerListener);
         // Tapping the lockscreen / notification media card opens the app.
@@ -143,10 +201,31 @@ public class AriaPlaybackService extends MediaSessionService {
                 0,
                 new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        session = new MediaSession.Builder(this, player)
+        Player controls = new ForwardingPlayer(player) {
+            @Override public Player.Commands getAvailableCommands() {
+                return super.getAvailableCommands().buildUpon()
+                        .add(Player.COMMAND_SEEK_TO_NEXT).add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        .add(Player.COMMAND_SEEK_TO_PREVIOUS).add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM).build();
+            }
+            @Override public boolean isCommandAvailable(int command) { return getAvailableCommands().contains(command); }
+            @Override public void seekToNext() { requestSkip(true); }
+            @Override public void seekToNextMediaItem() { requestSkip(true); }
+            @Override public void seekToPrevious() { requestSkip(false); }
+            @Override public void seekToPreviousMediaItem() { requestSkip(false); }
+        };
+        session = new MediaSession.Builder(this, controls)
                 .setSessionActivity(sessionActivity)
                 .build();
         instance = this;
+        if (requestedUsbExclusive) applyUsbExclusive(true);
+        // Playback starts via a service intent, not a bound MediaController.
+        // Register explicitly so Media3 creates and updates its notification.
+        addSession(session);
+        IntentFilter screenFilter = new IntentFilter();
+        screenFilter.addAction(Intent.ACTION_SCREEN_OFF);
+        screenFilter.addAction(Intent.ACTION_SCREEN_ON);
+        screenFilter.addAction(Intent.ACTION_USER_PRESENT);
+        ContextCompat.registerReceiver(this, screenReceiver, screenFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
     @Override
@@ -202,6 +281,10 @@ public class AriaPlaybackService extends MediaSessionService {
 
     @Override
     public void onDestroy() {
+        unregisterReceiver(screenReceiver);
+        LockPlayerActivity.dismiss();
+        mainHandler.removeCallbacks(progressRunnable);
+        applyUsbExclusive(false);
         instance = null;
         releaseTempForeground();
         if (session != null) {
@@ -218,7 +301,11 @@ public class AriaPlaybackService extends MediaSessionService {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         ExoPlayer activePlayer = player;
-        if (activePlayer == null || !activePlayer.isPlaying()) {
+        // isPlaying() is false while a network item is buffering. Stopping the
+        // service at that moment is why background playback often survived one
+        // song and then became silent.
+        if (activePlayer == null || activePlayer.getCurrentMediaItem() == null
+                || !activePlayer.getPlayWhenReady()) {
             stopSelf();
         }
         super.onTaskRemoved(rootIntent);
@@ -249,17 +336,30 @@ public class AriaPlaybackService extends MediaSessionService {
         void run(ExoPlayer player);
     }
 
+    static void requestSkip(boolean next) {
+        AriaPlaybackService service = instance;
+        if (service != null) service.runOnMain(() -> service.emit(service.baseEvent(next ? "next" : "previous")));
+    }
+
+    static void requestLike() {
+        AriaPlaybackService service = instance;
+        if (service != null) service.runOnMain(() -> service.emit(service.baseEvent("like")));
+    }
+
     // ---- Payload application ----
 
     private void applyLoad(Bundle extras) {
         runOnMain(() -> {
             android.util.Log.i("AriaPlayback", "applyLoad trackId=" + extras.getString("trackId", "")
-                    + " url=" + extras.getString("url", "")
+                    + " requestId=" + extras.getString("requestId", "")
                     + " paused=" + extras.getBoolean("paused", false));
             MediaItem item = buildItem(extras);
             double position = extras.getDouble("position", 0.0);
             long startPosition = position > 0.1 ? (long) (position * 1000) : C.TIME_UNSET;
-            player.setMediaItem(item, startPosition);
+            bitrateMeter = new AudioBitrateMeter();
+            androidx.media3.exoplayer.source.DefaultMediaSourceFactory sourceFactory =
+                    new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this, new MeasuredExtractorsFactory(bitrateMeter));
+            player.setMediaSource(sourceFactory.createMediaSource(item), startPosition);
             player.setVolume((float) clampVolume(extras.getDouble("volume", 1.0)));
             player.prepare();
             player.setPlayWhenReady(!extras.getBoolean("paused", false));
@@ -276,10 +376,39 @@ public class AriaPlaybackService extends MediaSessionService {
         });
     }
 
+    static Map<String, Object> getUsbExclusiveSettings(Context context) {
+        AriaPlaybackService service = instance;
+        Map<String, Object> result = new HashMap<>();
+        result.put("enabled", service != null ? service.usbExclusiveEnabled : requestedUsbExclusive);
+        result.put("connected", service != null ? service.hasUsbOutput() : hasUsbOutput(context));
+        result.put("supported", Build.VERSION.SDK_INT >= Build.VERSION_CODES.O);
+        return result;
+    }
+
+    static Map<String, Object> setUsbExclusiveEnabled(Context context, boolean enabled) {
+        AriaPlaybackService service = instance;
+        Map<String, Object> result = new HashMap<>();
+        boolean connected = service != null ? service.hasUsbOutput() : hasUsbOutput(context);
+        if (service == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            requestedUsbExclusive = enabled;
+            result.put("enabled", Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && enabled);
+            result.put("connected", connected);
+            result.put("supported", Build.VERSION.SDK_INT >= Build.VERSION_CODES.O);
+            return result;
+        }
+        requestedUsbExclusive = enabled;
+        service.runOnMain(() -> service.applyUsbExclusive(enabled));
+        result.put("enabled", enabled);
+        result.put("connected", connected);
+        result.put("supported", true);
+        return result;
+    }
+
     private MediaItem buildItem(Bundle extras) {
         String trackId = extras.getString("trackId", "");
         Bundle itemExtras = new Bundle();
         itemExtras.putString("trackId", trackId);
+        itemExtras.putString("requestId", extras.getString("requestId", ""));
 
         MediaMetadata.Builder metadata = new MediaMetadata.Builder()
                 .setTitle(extras.getString("title", ""))
@@ -289,9 +418,11 @@ public class AriaPlaybackService extends MediaSessionService {
         String artworkUrl = extras.getString("artworkUrl", "");
         if (artworkUrl != null && !artworkUrl.isEmpty()) {
             metadata.setArtworkUri(Uri.parse(artworkUrl));
+            LockPlayerActivity.prepareArtwork(this, artworkUrl);
         }
 
         return new MediaItem.Builder()
+                .setMediaId(trackId)
                 .setUri(extras.getString("url", ""))
                 .setMediaMetadata(metadata.build())
                 .build();
@@ -300,6 +431,48 @@ public class AriaPlaybackService extends MediaSessionService {
     private void restartProgressLoop() {
         mainHandler.removeCallbacks(progressRunnable);
         mainHandler.postDelayed(progressRunnable, 500);
+    }
+
+    private boolean hasUsbOutput() {
+        return hasUsbOutput(this);
+    }
+
+    private static boolean hasUsbOutput(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false;
+        AudioManager audioManager = context.getSystemService(AudioManager.class);
+        if (audioManager == null) return false;
+        for (AudioDeviceInfo device : audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+            int type = device.getType();
+            if (type == AudioDeviceInfo.TYPE_USB_DEVICE
+                    || type == AudioDeviceInfo.TYPE_USB_HEADSET
+                    || type == AudioDeviceInfo.TYPE_USB_ACCESSORY) return true;
+        }
+        return false;
+    }
+
+    private void applyUsbExclusive(boolean enabled) {
+        AudioManager audioManager = getSystemService(AudioManager.class);
+        if (audioManager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        if (!enabled) {
+            if (usbFocusRequest != null) audioManager.abandonAudioFocusRequest(usbFocusRequest);
+            usbFocusRequest = null;
+            usbExclusiveEnabled = false;
+            return;
+        }
+        if (!hasUsbOutput()) {
+            usbExclusiveEnabled = false;
+            return;
+        }
+        android.media.AudioAttributes focusAttributes = new android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build();
+        usbFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                .setAudioAttributes(focusAttributes)
+                .setOnAudioFocusChangeListener(usbFocusListener)
+                .build();
+        usbExclusiveEnabled = audioManager.requestAudioFocus(usbFocusRequest)
+                == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
     }
 
     // ---- Helpers ----
@@ -314,6 +487,16 @@ public class AriaPlaybackService extends MediaSessionService {
 
     private double safePosition() {
         return player != null ? player.getCurrentPosition() / 1000.0 : 0.0;
+    }
+
+    private void appendAudioFormat(Map<String, Object> event) {
+        androidx.media3.common.Format format = player.getAudioFormat();
+        if (format == null) return;
+        // Source encoding parameters, not the resampled PCM output or download speed.
+        if (format.sampleMimeType != null) event.put("audioFormat", format.sampleMimeType);
+        long measuredBitrate = bitrateMeter.bitrateAt(player.getCurrentPosition());
+        if (measuredBitrate > 0) event.put("bitrate", (double) measuredBitrate);
+        if (format.sampleRate > 0) event.put("sampleRate", (double) format.sampleRate);
     }
 
     private double safeDuration() {
@@ -349,6 +532,9 @@ public class AriaPlaybackService extends MediaSessionService {
         Map<String, Object> event = new HashMap<>();
         event.put("kind", kind);
         event.put("trackId", currentTrackId);
+        MediaItem item = player != null ? player.getCurrentMediaItem() : null;
+        Bundle itemExtras = item != null ? item.mediaMetadata.extras : null;
+        event.put("requestId", itemExtras != null ? itemExtras.getString("requestId", "") : "");
         return event;
     }
 

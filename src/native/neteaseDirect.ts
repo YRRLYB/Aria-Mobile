@@ -19,7 +19,7 @@ type InvokeResult = { ok: boolean; data?: unknown; code?: number; message?: stri
 const NeteaseDirectPlugin = registerPlugin<{
   status(): Promise<{ loggedIn: boolean; userId: number; nickname: string; avatarUrl: string }>;
   loginQrStart(): Promise<{ ok: boolean; key: string; qrUrl: string }>;
-  loginQrCheck(options: { key: string }): Promise<{ code: number; loggedIn: boolean; nickname?: string; avatarUrl?: string }>;
+  loginQrCheck(options: { key: string }): Promise<{ code: number; loggedIn: boolean; message?: string; nickname?: string; avatarUrl?: string }>;
   loginCellphone(options: { phone: string; password?: string; captcha?: string; countryCode?: string }): Promise<{
     ok: boolean; code: number; message: string; nickname?: string; avatarUrl?: string;
   }>;
@@ -60,10 +60,13 @@ type RawSong = {
   id: number;
   name: string;
   ar?: Array<{ id: number; name: string }>;
+  artists?: Array<{ id: number; name: string }>;
   singers?: Array<{ id: number; name: string }>;
   al?: { id: number; name: string; picUrl?: string };
   album?: { id: number; name: string; picUrl?: string };
   dt?: number;
+  duration?: number;
+  likedAt?: number;
   privilege?: { maxbr?: number; pl?: number };
 };
 
@@ -74,9 +77,9 @@ function mapSong(song: RawSong): ProviderTrack {
     // adds the netease: prefix exactly once, like the desktop server does.
     id: String(song.id),
     title: song.name ?? `#${song.id}`,
-    artist: (song.ar ?? song.singers ?? []).map((artist) => artist.name).join(" / "),
+    artist: (song.ar ?? song.artists ?? song.singers ?? []).map((artist) => artist.name).join(" / "),
     album: song.al?.name ?? song.album?.name ?? "",
-    duration: Math.round((song.dt ?? 0) / 1000),
+    duration: Math.round((song.dt ?? song.duration ?? 0) / 1000),
     // Display tag from the strongest tier the catalog reports; the real
     // played level arrives with streamMeta after warm/play.
     quality: maxbr >= 1400_000 ? "Hi-Res" : maxbr >= 999_000 ? "Lossless" : "320K",
@@ -84,10 +87,11 @@ function mapSong(song: RawSong): ProviderTrack {
     // Sentinel: resolved against songUrlV1 at playback time (MobileApp).
     streamUrl: `direct:${song.id}`,
     coverUrl: song.al?.picUrl ?? song.album?.picUrl ?? null,
-    likedAt: null,
+    likedAt: song.likedAt ?? null,
     bpm: null,
     bitrate: maxbr || null,
-    sampleRate: null,
+  sampleRate: null,
+    audioFormat: null,
     currentLevel: null,
     availableLevels: maxbr >= 999_000 ? ["standard", "higher", "exhigh", "lossless"] : ["standard", "higher", "exhigh"],
   };
@@ -204,12 +208,23 @@ export async function directAccount(): Promise<NeteaseAccountSummary> {
 
 export async function directQrStart(): Promise<NeteaseQrStart> {
   const started = await NeteaseDirectPlugin.loginQrStart();
+  if (!started.ok || !started.key || !started.qrUrl) {
+    throw new Error("二维码生成失败,请稍后重试");
+  }
   const qrImage = await QRCode.toDataURL(started.qrUrl, { margin: 1, width: 320 });
   return { key: started.key, qrUrl: started.qrUrl, qrImage, expiresIn: 180 };
 }
 
 export async function directQrCheck(key: string): Promise<NeteaseQrCheck> {
   const result = await NeteaseDirectPlugin.loginQrCheck({ key });
+  if ((result.code === 803 && !result.loggedIn) || (result.code !== 800 && result.code !== 801 && result.code !== 802 && result.code !== 803)) {
+    return {
+      code: result.code,
+      status: "error",
+      message: result.message || "二维码登录失败,请重新生成二维码后重试",
+      account: null,
+    };
+  }
   const status: NeteaseQrCheck["status"] =
     result.code === 803 ? "success" : result.code === 802 ? "scanned" : result.code === 800 ? "expired" : "waiting";
   if (result.code === 803) directActive = true;
@@ -227,7 +242,7 @@ export async function directCellphoneLogin(
   phone: string,
   credentials: { password?: string; captcha?: string },
   countryCode = "86",
-): Promise<{ ok: boolean; code: number; message: string }> {
+): Promise<{ ok: boolean; code: number; message: string; nickname?: string; avatarUrl?: string }> {
   const result = await NeteaseDirectPlugin.loginCellphone({ phone, ...credentials, countryCode });
   if (result.ok) directActive = true;
   return result;
@@ -245,7 +260,7 @@ export function directLogout(): void {
 const LEVEL_TAIL = ["standard", "higher", "exhigh", "lossless", "hires", "jymaster"] as const;
 
 function qualityFromLevel(level: string): ProviderTrack["quality"] {
-  if (level === "hires" || level === "jymaster") return "Hi-Res";
+  if (level === "hires" || level === "jymaster" || level === "jyeffect" || level === "sky") return "Hi-Res";
   if (level === "lossless") return "Lossless";
   return "320K";
 }
@@ -254,6 +269,7 @@ export type DirectStreamMeta = {
   url: string | null;
   bitrate: number | null;
   sampleRate: number | null;
+  audioFormat: string | null;
   size: number | null;
   quality: ProviderTrack["quality"];
   currentLevel: ProviderTrack["currentLevel"];
@@ -271,18 +287,11 @@ export async function directStreamMeta(
   const numeric = trackId.replace(/^(netease:|direct:)+/, "");
   // VIP accounts get the exact tier; free accounts get null for lossless+ —
   // walk DOWN the ladder until NetEase actually returns a url.
-  const requested = LEVEL_TAIL.indexOf(level);
-  // requested -> exhigh -> standard: at most 3 calls. Free accounts return
-  // null for lossless+ tiers, so probing the whole ladder is too slow.
-  const ladder: Array<typeof level> = [];
-  for (const candidate of [level, "exhigh" as const, "standard" as const]) {
-    if (!ladder.includes(candidate) && (requested < 0 || LEVEL_TAIL.indexOf(candidate) <= Math.max(requested, LEVEL_TAIL.indexOf("standard")))) {
-      ladder.push(candidate);
-    }
-  }
-  if (!ladder.length) ladder.push(level);
+  // Always walk every tier below the requested one. Catalog maxbr is often
+  // only the preview bitrate and must not prevent VIP lossless requests.
+  const ladder = QUALITY_LADDER.slice(0, QUALITY_LADDER.indexOf(level) + 1).reverse();
   for (const candidate of ladder) {
-    const body = await invoke<{ data?: Array<{ url?: string; br?: number; level?: string; size?: number; sr?: number }> }>(
+    const body = await invoke<{ data?: Array<{ url?: string; br?: number; level?: string; size?: number; sr?: number; type?: string }> }>(
       "songUrlV1",
       { id: numeric, level: candidate },
     );
@@ -293,39 +302,45 @@ export async function directStreamMeta(
     return {
       url: first.url,
       bitrate: first.br ?? null,
-      sampleRate: null,
+      sampleRate: first.sr ?? null,
+      audioFormat: first.type ?? null,
       size: null,
       quality: qualityFromLevel(resolvedLevel ?? candidate),
       currentLevel: resolvedLevel,
-      availableLevels: tailIndex >= 0 ? [...LEVEL_TAIL.slice(0, tailIndex + 1)] : ["standard", "higher", "exhigh"],
+      availableLevels: tailIndex >= 0 ? [...LEVEL_TAIL.slice(0, tailIndex + 1)] : ["standard", "higher", "exhigh", "lossless", "hires", "jymaster"],
     };
   }
-  return { url: null, bitrate: null, sampleRate: null, size: null, quality: "320K", currentLevel: null, availableLevels: ["standard", "higher", "exhigh"] };
+  return { url: null, bitrate: null, sampleRate: null, audioFormat: null, size: null, quality: "320K", currentLevel: null, availableLevels: ["standard", "higher", "exhigh"] };
 }
 
 const directProvider = {
   active: () => directActive,
   liked: async () => {
-    const liked = await invoke<{ ids?: number[] }>("likedIds");
-    const ids = (liked.ids ?? []).map((id) => Number(id)).filter(Boolean);
-    if (!ids.length) return { tracks: [] };
-    const detail = await invoke<{ songs?: RawSong[] }>("songDetail", { ids });
-    // song_detail may answer out of order — restore the likelist order
-    // (newest liked first).
-    const byId = new Map((detail.songs ?? []).map((song) => [Number(song.id), song]));
-    return { tracks: ids.map((id) => byId.get(id)).filter(Boolean).map((song) => mapSong(song as RawSong)) };
+    const result = await invoke<{ songs?: RawSong[] }>("likedSongs");
+    if (!Array.isArray(result.songs)) throw new Error("喜欢列表加载失败");
+    return { tracks: result.songs.map(mapSong).sort((a, b) => (b.likedAt ?? 0) - (a.likedAt ?? 0)) };
   },
   daily: async () => {
     const body = await invoke<{ data?: { dailySongs?: RawSong[] } }>("dailySongs");
     return { date: today(), tracks: (body.data?.dailySongs ?? []).map((song) => mapSong(song)), reason: "每日推荐" };
   },
-  roam: async (limit: number) => {
-    const body = await invoke<{ data?: Array<RawSong | { mainSong: RawSong }> }>("personalFm");
-    const songs = (body.data ?? [])
-      .slice(0, limit)
-      .map((entry) => (entry && typeof entry === "object" && "mainSong" in entry ? (entry as { mainSong: RawSong }).mainSong : entry as RawSong))
-      .filter(Boolean);
-    return { date: today(), tracks: songs.map((song) => mapSong(song)), reason: "私人漫游" };
+  roam: async (limit: number, options: { excludeIds?: string[] } = {}) => {
+    const songs = new Map<number, RawSong>();
+    const excluded = new Set((options.excludeIds ?? []).map((id) => Number(id.replace("netease:", ""))));
+    // FM usually returns three songs. Gather multiple batches, bounded to
+    // avoid retry loops if the provider repeats a batch or rate limits us.
+    for (let batch = 0; batch < Math.min(10, Math.ceil(limit / 3) + 2) && songs.size < limit; batch++) {
+      try {
+        const body = await invoke<{ data?: Array<RawSong | { mainSong: RawSong }> }>("personalFm");
+        const before = songs.size;
+        for (const entry of body.data ?? []) {
+          const song = "mainSong" in entry ? entry.mainSong : entry;
+          if (song?.id && !excluded.has(song.id)) songs.set(song.id, song);
+        }
+        if (songs.size === before) break;
+      } catch (error) { if (!songs.size) throw error; break; }
+    }
+    return { date: today(), tracks: [...songs.values()].slice(0, limit).map(mapSong), reason: "私人漫游" };
   },
   playlists: async () => {
     const body = await invoke<{ playlist?: Array<{ id: number; name: string; coverImgUrl?: string; trackCount?: number; userId?: number }> }>(

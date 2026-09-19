@@ -32,6 +32,7 @@ export type Track = {
   discNumber?: number | null;
   bitrate?: number | null;
   sampleRate?: number | null;
+  audioFormat?: string | null;
   bpm?: number | null;
   libraryRoot?: string;
   mediaKind?: "file" | "audio-cd";

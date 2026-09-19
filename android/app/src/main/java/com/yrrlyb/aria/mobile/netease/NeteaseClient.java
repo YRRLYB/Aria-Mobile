@@ -35,7 +35,8 @@ public final class NeteaseClient {
     /** QR key: body.data.unikey. */
     public static JSONObject loginQrKey(Context context) throws NeteaseHttp.NeteaseException {
         try {
-            return NeteaseHttp.request(context, "/api/login/qrcode/unikey", new JSONObject().put("type", 3), "eapi");
+            return NeteaseHttp.request(context, "/api/login/qrcode/unikey",
+                    new JSONObject().put("type", 3).put("timestamp", System.currentTimeMillis()), "eapi");
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "loginQrKey build failed");
         }
@@ -55,7 +56,8 @@ public final class NeteaseClient {
     public static QrCheckResult loginQrCheck(Context context, String key) throws NeteaseHttp.NeteaseException {
         JSONObject data;
         try {
-            data = new JSONObject().put("key", key).put("type", 3);
+            data = new JSONObject().put("key", key).put("type", 3)
+                    .put("timestamp", System.currentTimeMillis());
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "loginQrCheck build failed");
         }
@@ -81,7 +83,9 @@ public final class NeteaseClient {
                 nickname = profile.optString("nickname", "");
                 avatar = profile.optString("avatarUrl", "");
             }
-            NeteaseSession.save(context, cookie, userId, nickname, avatar);
+            if (hasCookie(cookie, "MUSIC_U")) {
+                NeteaseSession.save(context, cookie, userId, nickname, avatar);
+            }
         }
         return new QrCheckResult(code, body);
     }
@@ -99,6 +103,16 @@ public final class NeteaseClient {
             out.append(name).append('=').append(value);
         }
         return out.toString();
+    }
+
+    private static boolean hasCookie(String rawCookie, String name) {
+        if (rawCookie == null || rawCookie.isEmpty()) return false;
+        for (String part : rawCookie.split(";")) {
+            int equals = part.indexOf('=');
+            if (equals > 0 && name.equalsIgnoreCase(part.substring(0, equals).trim())
+                    && !part.substring(equals + 1).trim().isEmpty()) return true;
+        }
+        return false;
     }
 
     /**
@@ -143,6 +157,8 @@ public final class NeteaseClient {
         JSONObject body = NeteaseHttp.request(context, "/api/w/login/cellphone", data, "weapi");
         if (body.optInt("code", 0) == 200) {
             String cookie = NeteaseHttp.cookieFromLastResponse();
+            if (cookie.isEmpty()) cookie = body.optString("cookie", "");
+            if (cookie.isEmpty()) cookie = cookieFromJsonArray(body.optJSONArray("cookies"));
             long userId = 0;
             String nickname = "";
             String avatar = "";
@@ -153,7 +169,7 @@ public final class NeteaseClient {
                 nickname = profile.optString("nickname", "");
                 avatar = profile.optString("avatarUrl", "");
             }
-            NeteaseSession.save(context, cookie, userId, nickname, avatar);
+            if (!cookie.isEmpty()) NeteaseSession.save(context, cookie, userId, nickname, avatar);
         }
         return body;
     }
@@ -187,6 +203,50 @@ public final class NeteaseClient {
                     new JSONObject().put("uid", NeteaseSession.userId(context)), "eapi");
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "likedIds build failed");
+        }
+    }
+
+    /** The liked playlist carries addition order; the likelist endpoint does not. */
+    public static JSONObject likedSongs(Context context) throws NeteaseHttp.NeteaseException {
+        try {
+            JSONObject playlists = userPlaylists(context);
+            JSONArray items = playlists.optJSONArray("playlist");
+            long playlistId = 0;
+            if (items != null) for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item != null && item.optInt("specialType") == 5
+                        && item.optLong("userId") == NeteaseSession.userId(context)) {
+                    playlistId = item.optLong("id");
+                    break;
+                }
+            }
+            if (playlistId == 0) throw new NeteaseHttp.NeteaseException(404, "Liked playlist not found");
+            JSONObject detail = NeteaseHttp.request(context, "/api/v6/playlist/detail",
+                    new JSONObject().put("id", playlistId).put("n", 100000).put("s", 0), "eapi");
+            JSONObject playlist = detail.optJSONObject("playlist");
+            JSONArray entries = playlist != null ? playlist.optJSONArray("trackIds") : null;
+            if (entries == null) throw new NeteaseHttp.NeteaseException(502, "Liked playlist unavailable");
+            long[] ids = new long[entries.length()];
+            for (int i = 0; i < ids.length; i++) ids[i] = entries.getJSONObject(i).getLong("id");
+            JSONArray songs = songDetail(context, ids).getJSONArray("songs");
+            java.util.Map<Long, JSONObject> byId = new java.util.HashMap<>();
+            for (int i = 0; i < songs.length(); i++) {
+                JSONObject song = songs.getJSONObject(i);
+                byId.put(song.getLong("id"), song);
+            }
+            JSONArray ordered = new JSONArray();
+            for (int i = 0; i < ids.length; i++) {
+                JSONObject song = byId.get(ids[i]);
+                if (song == null) continue;
+                // Some accounts expose playlist insertion times; otherwise
+                // retain the server's newest-first playlist order.
+                long added = entries.getJSONObject(i).optLong("t", 0);
+                if (added > 1000000000L) song.put("likedAt", added < 100000000000L ? added * 1000 : added);
+                ordered.put(song);
+            }
+            return new JSONObject().put("songs", ordered);
+        } catch (JSONException error) {
+            throw new NeteaseHttp.NeteaseException(502, "Incomplete liked playlist response");
         }
     }
 
@@ -327,7 +387,7 @@ public final class NeteaseClient {
             } catch (JSONException error) {
                 throw new NeteaseHttp.NeteaseException(500, "songDetail build failed");
             }
-            JSONObject body = NeteaseHttp.cachedRequest(context, "detail:" + start + ":" + ids.length,
+            JSONObject body = NeteaseHttp.cachedRequest(context, "detail-v2:" + c.toString(),
                     30 * 60_000L, "/api/v3/song/detail", data, "weapi");
             JSONArray songs = body.optJSONArray("songs");
             if (songs != null) {

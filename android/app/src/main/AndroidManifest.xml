@@ -26,6 +26,11 @@
 
         </activity>
 
+        <activity android:name=".LockPlayerActivity" android:exported="false"
+            android:launchMode="singleTask" android:excludeFromRecents="true"
+            android:taskAffinity="com.yrrlyb.aria.mobile.lockscreen"
+            android:showWhenLocked="true" android:theme="@style/AppTheme.NoActionBar" />
+
         <service
             android:name=".AriaPlaybackService"
             android:exported="true"
@@ -53,6 +58,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"

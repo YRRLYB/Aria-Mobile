@@ -4,6 +4,9 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.content.Intent;
+import android.net.Uri;
+import android.provider.Settings;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -57,6 +60,7 @@ public class AriaAudioPlugin extends Plugin {
     @PluginMethod
     public void load(PluginCall call) {
         Bundle bundle = new Bundle();
+        bundle.putString("requestId", orEmpty(call.getString("requestId")));
         bundle.putString("url", orEmpty(call.getString("url")));
         bundle.putString("trackId", orEmpty(call.getString("trackId")));
         bundle.putString("title", orEmpty(call.getString("title")));
@@ -73,6 +77,7 @@ public class AriaAudioPlugin extends Plugin {
     @PluginMethod
     public void loadNext(PluginCall call) {
         Bundle bundle = new Bundle();
+        bundle.putString("requestId", orEmpty(call.getString("requestId")));
         bundle.putString("url", orEmpty(call.getString("url")));
         bundle.putString("trackId", orEmpty(call.getString("trackId")));
         bundle.putString("title", orEmpty(call.getString("title")));
@@ -163,7 +168,76 @@ public class AriaAudioPlugin extends Plugin {
         call.resolve();
     }
 
+    @PluginMethod
+    public void getUsbExclusiveSettings(PluginCall call) {
+        call.resolve(toJsObject(AriaPlaybackService.getUsbExclusiveSettings(getContext())));
+    }
+
+    @PluginMethod
+    public void setUsbExclusiveEnabled(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        call.resolve(toJsObject(AriaPlaybackService.setUsbExclusiveEnabled(getContext(), enabled)));
+    }
+
+    @PluginMethod
+    public void updateLockInfo(PluginCall call) {
+        LockPlayerActivity.updateInfo(orEmpty(call.getString("trackId")),
+                call.getArray("lyrics"), Boolean.TRUE.equals(call.getBoolean("liked", false)));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getLockScreenSettings(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("enabled", getContext().getSharedPreferences("aria-lock-screen", 0).getBoolean("enabled", false));
+        result.put("permission", Settings.canDrawOverlays(getContext()));
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void setLockScreenEnabled(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        getContext().getSharedPreferences("aria-lock-screen", 0).edit().putBoolean("enabled", enabled).apply();
+        if (!enabled) getActivity().runOnUiThread(LockPlayerActivity::dismiss);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openLockScreenPermission(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                getActivity().startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getContext().getPackageName())));
+                call.resolve();
+            } catch (RuntimeException error) { call.reject("无法打开锁屏显示权限设置", error); }
+        });
+    }
+
+    @PluginMethod
+    public void openLockScreenAppSettings(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if ("xiaomi".equalsIgnoreCase(Build.MANUFACTURER)) {
+                    try {
+                        getActivity().startActivity(new Intent("miui.intent.action.APP_PERM_EDITOR")
+                                .setPackage("com.miui.securitycenter").putExtra("extra_pkgname", getContext().getPackageName()));
+                        call.resolve(); return;
+                    } catch (RuntimeException ignored) { }
+                }
+                getActivity().startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + getContext().getPackageName())));
+                call.resolve();
+            } catch (RuntimeException error) { call.reject("无法打开应用权限设置", error); }
+        });
+    }
+
     private static String orEmpty(String value) {
         return value != null ? value : "";
+    }
+
+    private static JSObject toJsObject(Map<String, Object> values) {
+        JSObject result = new JSObject();
+        for (Map.Entry<String, Object> entry : values.entrySet()) result.put(entry.getKey(), entry.getValue());
+        return result;
     }
 }
