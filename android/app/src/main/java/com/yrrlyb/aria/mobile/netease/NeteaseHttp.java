@@ -80,7 +80,9 @@ public final class NeteaseHttp {
     }
 
     public static JSONObject request(Context context, String uri, JSONObject data, String crypto) throws NeteaseException {
-        return request(NeteaseSession.cookie(context), uri, data, crypto);
+        String stored = NeteaseSession.cookie(context);
+        String tracking = NeteaseSession.trackingCookie(context);
+        return request(stored.isEmpty() ? tracking : tracking + "; " + stored, uri, data, crypto);
     }
 
     /** Cookie-less overload keeps the request layer runnable on the JVM (smoke tests). */

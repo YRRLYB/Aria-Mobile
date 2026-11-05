@@ -188,6 +188,8 @@ export type ProviderPlaylist = {
   name: string;
   trackCount: number;
   subscribed: boolean;
+  owned?: boolean;
+  creatorName?: string | null;
   coverColor: string;
   coverUrl?: string | null;
 };
@@ -284,12 +286,13 @@ export function apiUrl(url: string) {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(init?.body ? { "Content-Type": "application/json" } : {}),
+    ...(init?.headers as Record<string, string> | undefined),
+  };
   const response = await fetch(apiUrl(url), {
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
     ...init,
+    headers,
   });
 
   if (!response.ok) {
@@ -331,6 +334,7 @@ export type NeteaseDirectProvider = {
   playlistTracks(playlistId: string): Promise<{ tracks: ProviderTrack[] }>;
   searchTracks(keyword: string, limit: number): Promise<ProviderTrack[]>;
   searchArtists(keyword: string, limit: number): Promise<ProviderArtist[]>;
+  searchPlaylists(keyword: string, limit: number): Promise<ProviderPlaylist[]>;
   artistTopSongs(artistId: string): Promise<{ tracks: ProviderTrack[] }>;
   lyrics(trackId: string): Promise<{ lyrics: LyricLine[] }>;
   streamMeta(trackId: string, level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster"): Promise<NeteaseStreamMeta>;
@@ -536,11 +540,13 @@ export const api = {
       return Promise.all([
         directProvider.searchTracks(query, limit),
         directProvider.searchArtists(query, Math.min(limit, 18)),
-      ]).then(([neteaseTracks, artists]) => ({
+        directProvider.searchPlaylists(query, Math.min(limit, 18)),
+      ]).then(([neteaseTracks, artists, playlists]) => ({
         query,
         localTracks: [] as ApiScannedTrack[],
         neteaseTracks,
         artists,
+        playlists,
       }));
     }
     const params = new URLSearchParams({ q: query, limit: String(limit) });
@@ -549,7 +555,8 @@ export const api = {
       localTracks: ApiScannedTrack[];
       neteaseTracks: ProviderTrack[];
       artists: ProviderArtist[];
-    }>(`/api/search?${params}`);
+      playlists?: ProviderPlaylist[];
+    }>(`/api/search?${params}`).then((result) => ({ ...result, playlists: result.playlists ?? [] }));
   },
   lookupArtist(name: string) {
     const directProvider = neteaseDirect();

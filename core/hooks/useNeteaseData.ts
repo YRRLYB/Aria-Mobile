@@ -214,6 +214,7 @@ export function useNeteaseData(options: {
 
   async function openPlaylist(playlist: ProviderPlaylist) {
     setSelectedPlaylist(playlist);
+    setPlaylistTracks([]);
     setPlaylistLoading(true);
     try {
       const result = await api.getNeteasePlaylistTracks(playlist.id);

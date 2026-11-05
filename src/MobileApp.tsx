@@ -4,6 +4,7 @@ import { type Track } from "@/data/music";
 import { idleTrack } from "@/lib/trackMappers";
 import { api, getApiConnection, type NeteaseAccountSummary, type ProviderPlaylist } from "@/lib/api";
 import {
+  createCachedQueueSnapshots,
   readCachedAudioSettings,
   readCachedPlayerState,
   writeCachedAudioSettings,
@@ -16,7 +17,7 @@ import {
   writePlayHistory,
   type PlayHistoryEntry,
 } from "@/lib/playHistory";
-import { commitPlaybackTime, resetPlaybackTime, usePlaybackTime } from "@/lib/playbackClock";
+import { commitPlaybackTime, getPlaybackTime, resetPlaybackTime, usePlaybackTime } from "@/lib/playbackClock";
 import { getTrackSearchSignature } from "@/lib/trackMappers";
 import { materializeQueueIds, mergeQueueTrackSources, orderedQueueIds, playableTracks } from "@/lib/playQueue";
 import { createLocalArtistSummaries, type ArtistSummary } from "@/lib/artists";
@@ -27,7 +28,7 @@ import { useDiscovery, type SearchBundle } from "@/hooks/useDiscovery";
 import { ConnectScreen } from "./ConnectScreen";
 import { clearConnection, readConnection, verifyConnection } from "./connection";
 import { App as CapacitorApp } from "@capacitor/app";
-import { AriaAudio, isNativeApp, setStatusBarIconsLight, type AriaAudioEvent, type UsbExclusiveSettings } from "./native/ariaAudio";
+import { AriaAudio, isNativeApp, setStatusBarIconsLight, type AriaAudioEvent, type EqualizerSettings, type UsbExclusiveSettings } from "./native/ariaAudio";
 import {
   disableDirectMode,
   enableDirectMode,
@@ -37,15 +38,17 @@ import {
   registerDirectProvider,
   resolveDirectStreamUrl,
 } from "./native/neteaseDirect";
-import { applySafeAreasFromNative } from "./native/ariaShell";
+import { applySafeAreasFromNative, downloadTrackFile, deleteDownloadedFile, requestUninterruptedPlayback } from "./native/ariaShell";
 import { cachedDirectAccount } from "./native/neteaseDirect";
 import { MiniPlayer, TabBar } from "./Chrome";
 import { HomeScreen, LibraryScreen, SearchScreen, SettingsScreen } from "./screens";
 import { NowPlaying } from "./NowPlaying";
 import { PlaybackSession, updateMatchingTrack } from "./playbackSession";
+import { buildNativeQueue, playbackStreamUrl, targetLevelFor, trackArtworkUrl } from "./playbackQueue";
 import { hydrateLibrary, readLibrary, saveLibrary, compactTrack, newestLiked } from "./libraryStorage";
 import { CollectionScreen } from "./Collections";
 import { positiveAudioValue, type PlaybackQuality } from "./playbackQuality";
+import { compactOfflineRecord, readOfflineRecords, writeOfflineRecords, type OfflineRecord } from "./offlineStorage";
 
 export type Gate = "checking" | "unconfigured" | "ready";
 export type TabId = "home" | "library" | "search" | "settings";
@@ -69,10 +72,23 @@ export type MobileControls = {
   currentTime: number;
   durationSeconds: number;
   volume: number;
+  sleepTimerRemaining: number | null;
+  setSleepTimer: (minutes: number | null) => void;
+  playbackSpeed: number;
+  setPlaybackSpeed: (speed: number) => void;
+  equalizerSupported: boolean;
+  equalizerPresets: string[];
+  equalizerPreset: number;
+  setEqualizerPreset: (preset: number) => void;
+  offlineTracks: Track[];
+  downloadingTrackIds: string[];
+  downloadTrack: (trackId: string) => void;
+  deleteOfflineTrack: (trackId: string) => void;
   shuffleEnabled: boolean;
   repeatMode: RepeatMode;
   hifiEnabled: boolean;
   qualityLevel: QualityLevel;
+  qualitySwitching: boolean;
   playQueueTracks: Track[];
   localTracks: Track[];
   likedLocalTracks: Track[];
@@ -98,15 +114,20 @@ export type MobileControls = {
   connection: { serverUrl: string; token: string };
   searchQuery: string;
   chooseTrack: (trackId: string, preferredQueue?: Track[]) => void;
+  playShuffledTracks: (tracks: Track[]) => void;
   togglePlayback: () => void;
   playNext: () => void;
   playPrevious: () => void;
+  clearQueue: () => void;
+  reorderQueue: (trackIds: string[]) => void;
+  removeFromQueue: (trackId: string) => void;
+  playNextInQueue: (trackId: string) => void;
   seekTo: (time: number) => void;
   setVolume: (volume: number) => void;
   toggleShuffle: () => void;
   toggleRepeatMode: () => void;
   toggleLikeTrack: (trackId: string) => void;
-  openPlaylist: (playlist: ProviderPlaylist) => void;
+  openPlaylist: (playlist: ProviderPlaylist) => Promise<void>;
   closePlaylist: () => void;
   refreshNeteaseData: () => void;
   refreshRoamData: () => Promise<void>;
@@ -203,12 +224,33 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   const [playRequest, setPlayRequest] = useState(0);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [volume, setVolume] = useState(cachedState.volume ?? 85);
+  const [playbackSpeed, setPlaybackSpeedState] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem("aria-playback-speed") || 1);
+      return value >= 0.5 && value <= 3 ? value : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const [equalizerSupported, setEqualizerSupported] = useState(false);
+  const [equalizerPresets, setEqualizerPresets] = useState<string[]>([]);
+  const [equalizerPreset, setEqualizerPresetState] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem("aria-equalizer-preset"));
+      return Number.isFinite(value) ? Math.round(value) : -1;
+    } catch {
+      return -1;
+    }
+  });
+  const [sleepTimerEndsAt, setSleepTimerEndsAt] = useState<number | null>(null);
+  const [sleepTimerRemaining, setSleepTimerRemaining] = useState<number | null>(null);
   const [shuffleEnabled, setShuffleEnabled] = useState(cachedState.shuffleEnabled ?? false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>(cachedState.repeatMode ?? "all");
   // Direct mode default: a level free accounts can actually stream (HiFi
   // stays opt-in — lossless/hires tiers null out for free accounts).
-  const [hifiEnabled, setHifiEnabled] = useState(() => readCachedAudioSettings().hifiEnabled ?? false);
-  const [qualityLevel, setQualityLevel] = useState<QualityLevel>(cachedState.qualityLevel ?? (isNativeApp() ? "exhigh" : "lossless"));
+  const [hifiEnabled, setHifiEnabledState] = useState(() => readCachedAudioSettings().hifiEnabled ?? false);
+  const [qualityLevel, setQualityLevelState] = useState<QualityLevel>(cachedState.qualityLevel ?? (isNativeApp() ? "exhigh" : "lossless"));
+  const [qualitySwitching, setQualitySwitching] = useState(false);
   const [likedTrackIds, setLikedTrackIds] = useState<Record<string, boolean>>(() => {
     try {
       return JSON.parse(window.localStorage.getItem("aria-liked-track-ids") || "{}") as Record<string, boolean>;
@@ -226,11 +268,21 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   const [playHistory, setPlayHistory] = useState<PlayHistoryEntry[]>(readPlayHistory);
   const [searchQuery, setSearchQuery] = useState("");
   const [deviceTracks, setDeviceTracks] = useState<Track[]>(cachedLibrary.device);
+  // Restored queue snapshots are kept as a live fallback pool. Without this,
+  // a track that was queued but never played (and whose source playlist is not
+  // loaded yet) could not receive a resolved direct URL or updated metadata.
+  const [restoredQueueTracks, setRestoredQueueTracks] = useState<Track[]>(cachedState.playQueueSnapshots ?? []);
+  const [offlineRecords, setOfflineRecords] = useState<OfflineRecord[]>(readOfflineRecords);
+  const [downloadingTrackIds, setDownloadingTrackIds] = useState<string[]>([]);
+  const offlineTracks = useMemo(() => offlineRecords.map((record) => record.track), [offlineRecords]);
   const [localLikedTimes, setLocalLikedTimes] = useState<Record<string, number>>(() => {
     try { return JSON.parse(localStorage.getItem("aria-local-liked-times") || "{}"); } catch { return {}; }
   });
 
   const pendingSeekRef = useRef(0);
+  const reloadPositionRef = useRef(0);
+  const qualitySwitchTimerRef = useRef(0);
+  const qualitySequenceRef = useRef(0);
   const handleTrackEndedRef = useRef<() => void>(() => undefined);
   const playbackSessionRef = useRef(new PlaybackSession());
   const resolvedQualityRef = useRef<{ trackId: string; url: string; quality: PlaybackQuality } | null>(null);
@@ -238,9 +290,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   const nativeEventHandlerRef = useRef<(event: AriaAudioEvent) => void>(() => undefined);
   const relativeTrackRef = useRef<(direction: 1 | -1) => void>(() => undefined);
   const nativeAdvancedTrackRef = useRef<string | null>(null);
-  const nativePreloadBusyRef = useRef(false);
-  const nativePreloadKeyRef = useRef("");
   const getActiveTrackRef = useRef<() => Track>(() => idleTrack);
+  const trackByIdRef = useRef<Map<string, Track>>(new Map());
+  const activeTrackIdRef = useRef(activeTrackId);
+  const nativeSessionActiveRef = useRef(false);
   const updateTrackRef = useRef<(trackId: string, updateTrack: (track: Track) => Track, updateOptions?: TrackUpdateOptions) => void>(() => undefined);
   const applyTrackUpdate = useCallback(
     (trackId: string, updateTrack: (track: Track) => Track, updateOptions?: TrackUpdateOptions) => {
@@ -327,8 +380,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   }, [artistTracks]);
 
   const allTracks = useMemo(
-    () => [...discoveryAllTracks, ...artistPoolTracks, ...deviceTracks, ...playHistory.map((entry) => entry.track)],
-    [discoveryAllTracks, artistPoolTracks, deviceTracks, playHistory],
+    // History snapshots go first so a fresh instance from a live pool wins
+    // when both contain the same id (history may hold an expired stream URL).
+    () => [...playHistory.map((entry) => entry.track), ...restoredQueueTracks, ...discoveryAllTracks, ...artistPoolTracks, ...deviceTracks, ...offlineTracks],
+    [discoveryAllTracks, artistPoolTracks, deviceTracks, playHistory, restoredQueueTracks, offlineTracks],
   );
 
   const trackById = useMemo(() => {
@@ -358,7 +413,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
   useEffect(() => {
     getActiveTrackRef.current = () => activeTrack;
-  }, [activeTrack]);
+    activeTrackIdRef.current = activeTrack.id;
+    trackByIdRef.current = trackById;
+  }, [activeTrack, trackById]);
 
   useLyricsSync({ applyTrackUpdate, activeTrack, localTracks });
 
@@ -374,6 +431,12 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       netease.setRoamTracks(applyTo);
       netease.setPlaylistTracks(applyTo);
       setArtistPoolTracks(applyTo);
+      setRestoredQueueTracks(applyTo);
+      setOfflineRecords((current) =>
+        current.map((record) =>
+          record.track.id === trackId ? { ...record, track: updateTrack(record.track) } : record,
+        ),
+      );
       if (includeHistory) {
         setPlayHistory((current) =>
           current.some((entry) => entry.track.id === trackId)
@@ -400,35 +463,42 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     return candidateQueues.find((tracks) => tracks.some((track) => track.id === trackId)) ?? [];
   }
 
-  const choosingRef = useRef(false);
+  const chooseSequenceRef = useRef(0);
 
-  async function chooseTrack(trackId: string, preferredQueue?: Track[]) {
+  async function chooseTrack(trackId: string, preferredQueue?: Track[], options?: { shuffle?: boolean }) {
     playbackIntentRef.current = true;
     if (nativeAudio && !batteryPromptShownRef.current) {
       batteryPromptShownRef.current = true;
-      void import("./native/ariaShell").then((m) => m.requestUninterruptedPlayback());
+      void requestUninterruptedPlayback();
     }
+    const chooseSequence = ++chooseSequenceRef.current;
+    // A pending live quality change belongs to the previous selection.
+    qualitySequenceRef.current += 1;
     const queue = resolveQueueForTrack(trackId, preferredQueue);
     const preferredTarget = preferredQueue?.find((track) => track.id === trackId && track.streamUrl);
-    if (preferredQueue && !preferredTarget) return;
     let targetTrack = preferredTarget ?? queue.find((track) => track.id === trackId) ?? trackById.get(trackId);
     if (!targetTrack?.streamUrl) return;
+    if (!directMode && targetTrack.streamUrl.startsWith("direct:")) {
+      setPlayNotice("该歌曲链接已失效，请刷新曲库后重试");
+      window.setTimeout(() => setPlayNotice(null), 2600);
+      return;
+    }
 
     // Direct mode: resolve the CDN url at click time — the load layer only
     // ever sees real urls, so switching is deterministic.
-    if (directMode && targetTrack.source === "netease") {
-      if (choosingRef.current) return;
-      choosingRef.current = true;
+    if (directMode && targetTrack.source === "netease" && !targetTrack.offline) {
       setPlayNotice("正在获取播放链接…");
       try {
         const meta = await resolveDirectStreamUrl(
           trackId,
-          targetLevelFor(targetTrack, hifiEnabled, qualityLevel),
+          targetLevelFor(hifiEnabled, qualityLevel),
         );
+        // A newer tap owns the screen now; never let a slow response pull the
+        // UI back to the previous track.
+        if (chooseSequence !== chooseSequenceRef.current) return;
         if (!meta?.url) {
           setPlayNotice(`「${targetTrack.title}」暂时无法播放`);
           window.setTimeout(() => setPlayNotice(null), 2600);
-          choosingRef.current = false;
           return;
         }
         resolvedQualityRef.current = { trackId, url: meta.url, quality: {
@@ -446,19 +516,35 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         }));
         targetTrack = { ...targetTrack, streamUrl: meta.url ?? undefined };
         setPlayNotice(null);
-      } finally {
-        choosingRef.current = false;
+      } catch {
+        if (chooseSequence !== chooseSequenceRef.current) return;
+        setPlayNotice(`「${targetTrack.title}」暂时无法播放`);
+        window.setTimeout(() => setPlayNotice(null), 2600);
+        return;
       }
     }
 
-    const playableIds = materializeQueueIds(queue.length ? queue : [targetTrack], trackId, shuffleEnabled);
+    const playableIds = materializeQueueIds(
+      queue.length ? queue : [targetTrack],
+      trackId,
+      options?.shuffle ?? shuffleEnabled,
+    );
     if (playableIds.length) setPlayQueueIds(playableIds);
+    if (options?.shuffle) setShuffleEnabled(true);
     pendingSeekRef.current = 0;
+    reloadPositionRef.current = 0;
     setActiveTrackId(trackId);
     setPlayRequest((value) => value + 1);
     resetPlaybackTime();
     setDurationSeconds(0);
     setPlaying(true);
+  }
+
+  function playShuffledTracks(tracks: Track[]) {
+    const playable = playableTracks(tracks);
+    if (!playable.length) return;
+    const random = playable[Math.floor(Math.random() * playable.length)];
+    void chooseTrack(random.id, tracks, { shuffle: true });
   }
 
   function pickRelativeTrack(direction: 1 | -1) {
@@ -473,10 +559,19 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     if (!queue.length) return;
     if (shouldRefreshShuffleQueue) setPlayQueueIds(nextQueueIds);
     const currentIndex = queue.findIndex((track) => track.id === activeTrack.id);
-    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-    const nextTrack = queue[(safeIndex + direction + queue.length) % queue.length];
-    if (!nextTrack?.streamUrl) return;
-    if (directMode && nextTrack.source === "netease") {
+    const safeIndex = currentIndex >= 0 ? currentIndex : direction === 1 ? -1 : 0;
+    // Some restored/desktop entries can lack a stream URL. Skip over them
+    // instead of silently ignoring the next-button press.
+    let nextTrack: Track | undefined;
+    for (let offset = 1; offset <= queue.length; offset += 1) {
+      const candidate = queue[(safeIndex + direction * offset + queue.length * 2) % queue.length];
+      if (candidate?.streamUrl && (directMode || !candidate.streamUrl.startsWith("direct:"))) {
+        nextTrack = candidate;
+        break;
+      }
+    }
+    if (!nextTrack) return;
+    if (directMode && nextTrack.source === "netease" && !nextTrack.offline) {
       // Sentinel: let chooseTrack resolve the stream, then switch.
       void chooseTrack(nextTrack.id, queue);
       return;
@@ -485,6 +580,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       restartActiveTrack();
       return;
     }
+    reloadPositionRef.current = 0;
     setActiveTrackId(nextTrack.id);
     setPlayRequest((value) => value + 1);
     resetPlaybackTime();
@@ -496,6 +592,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   function restartActiveTrack() {
     playbackIntentRef.current = true;
     pendingSeekRef.current = 0;
+    reloadPositionRef.current = 0;
     resetPlaybackTime();
     setPlaying(true);
     setPlayRequest((value) => value + 1);
@@ -525,6 +622,17 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
        if (!playing) {
          playbackIntentRef.current = true;
          setPlaying(true);
+         void AriaAudio.getState()
+           .then((state) => {
+             if (state.active) return;
+             nativeSessionActiveRef.current = false;
+             reloadPositionRef.current = Math.max(nextTime, 0.001);
+             setPlayRequest((value) => value + 1);
+           })
+           .catch(() => {
+             reloadPositionRef.current = Math.max(nextTime, 0.001);
+             setPlayRequest((value) => value + 1);
+           });
        }
       return;
     }
@@ -541,12 +649,17 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   function togglePlayback() {
     if (activeTrack.streamUrl) {
       if (activeTrack.streamUrl.startsWith("direct:")) {
+        if (!directMode) {
+          setPlayNotice("该歌曲链接已失效，请刷新曲库后重试");
+          window.setTimeout(() => setPlayNotice(null), 2600);
+          return;
+        }
         // Boot-restored sentinel: resolve, persist onto the track, then play.
         setPlayNotice("正在获取播放链接…");
         void (async () => {
           const meta = await resolveDirectStreamUrl(
             activeTrack.id,
-            targetLevelFor(activeTrack, hifiEnabled, qualityLevel),
+            targetLevelFor(hifiEnabled, qualityLevel),
           );
           if (!meta?.url) {
             setPlayNotice(`「${activeTrack.title}」暂时无法播放`);
@@ -566,19 +679,244 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
             currentLevel: meta.currentLevel ?? track.currentLevel,
             availableLevels: meta.availableLevels ?? track.availableLevels,
           }));
+          setPlayNotice(null);
            playbackIntentRef.current = true;
            setPlaying(true);
         })();
         return;
       }
-      setPlaying((value) => {
-        playbackIntentRef.current = !value;
-        return !value;
-      });
+      const nextPlaying = !playing;
+      playbackIntentRef.current = nextPlaying;
+      setPlaying(nextPlaying);
+      if (nativeAudio && nextPlaying) {
+        // The service can be killed by the system while the WebView stays
+        // alive. Starting from a stale session then appears to do nothing;
+        // re-issue the load when no native player exists any more.
+        void AriaAudio.getState()
+          .then((state) => {
+            if (state.active) return;
+            nativeSessionActiveRef.current = false;
+            reloadPositionRef.current = getPlaybackTime();
+            setPlayRequest((request) => request + 1);
+          })
+          .catch(() => {
+            reloadPositionRef.current = getPlaybackTime();
+            setPlayRequest((request) => request + 1);
+          });
+      }
       return;
     }
     const fallbackTrack = playableTracks(playQueueTracks)[0] ?? playableTracks(allTracks)[0];
     if (fallbackTrack) chooseTrack(fallbackTrack.id);
+  }
+
+  async function applyAudioQuality(nextLevel: QualityLevel, nextHifi: boolean) {
+    if (nextLevel === qualityLevel && nextHifi === hifiEnabled) return;
+    const previous = { level: qualityLevel, hifi: hifiEnabled };
+    const trackId = activeTrack.id;
+    const switchable =
+      activeTrack.source === "netease" &&
+      !activeTrack.offline &&
+      Boolean(activeTrack.streamUrl) &&
+      !activeTrack.streamUrl?.startsWith("direct:");
+
+    // Preference changes still persist for the next track even when there is
+    // nothing loaded right now.
+    if (!switchable) {
+      setQualityLevelState(nextLevel);
+      setHifiEnabledState(nextHifi);
+      return;
+    }
+
+    const position = getPlaybackTime();
+    const sequence = ++qualitySequenceRef.current;
+    markQualitySwitching();
+    setQualityLevelState(nextLevel);
+    setHifiEnabledState(nextHifi);
+
+    if (directMode) {
+      // Direct mode resolves a fresh CDN url for the new tier. The native
+      // service must receive that url before it is asked to reload.
+      try {
+        const meta = await resolveDirectStreamUrl(trackId, targetLevelFor(nextHifi, nextLevel));
+        if (sequence !== qualitySequenceRef.current || activeTrackIdRef.current !== trackId) return;
+        if (!meta?.url) {
+          setQualityLevelState(previous.level);
+          setHifiEnabledState(previous.hifi);
+          finishQualitySwitching();
+          setPlayNotice("该音质暂时不可用，已保留当前音质");
+          window.setTimeout(() => setPlayNotice(null), 2600);
+          return;
+        }
+        resolvedQualityRef.current = {
+          trackId,
+          url: meta.url,
+          quality: { bitrate: meta.bitrate, sampleRate: meta.sampleRate, audioFormat: meta.audioFormat },
+        };
+        applyTrackUpdate(trackId, (track) => ({
+          ...track,
+          streamUrl: meta.url ?? undefined,
+          bitrate: meta.bitrate,
+          sampleRate: meta.sampleRate,
+          audioFormat: meta.audioFormat,
+          quality: meta.quality ?? track.quality,
+          currentLevel: meta.currentLevel ?? track.currentLevel,
+          availableLevels: meta.availableLevels ?? track.availableLevels,
+        }));
+      } catch {
+        if (sequence !== qualitySequenceRef.current || activeTrackIdRef.current !== trackId) return;
+        setQualityLevelState(previous.level);
+        setHifiEnabledState(previous.hifi);
+        finishQualitySwitching();
+        setPlayNotice("音质切换失败，请检查网络后重试");
+        window.setTimeout(() => setPlayNotice(null), 2600);
+        return;
+      }
+    }
+
+    if (sequence !== qualitySequenceRef.current) return;
+    // Resume from the exact playhead after the source is swapped. The native
+    // service reads reloadPositionRef; the HTML5 fallback seeks on metadata.
+    reloadPositionRef.current = Math.max(position, 0.001);
+    pendingSeekRef.current = position;
+    setPlayRequest((value) => value + 1);
+  }
+
+  function changeQualityLevel(level: QualityLevel) {
+    void applyAudioQuality(level, false);
+  }
+
+  function changeHifiPreference(enabled: boolean) {
+    void applyAudioQuality(qualityLevel, enabled);
+  }
+
+  function setSleepTimer(minutes: number | null) {
+    const next = minutes && minutes > 0 ? Math.round(minutes) : null;
+    setSleepTimerEndsAt(next ? Date.now() + next * 60_000 : null);
+    setSleepTimerRemaining(next ? next * 60 : null);
+    if (nativeAudio) {
+      void AriaAudio.setSleepTimer({ minutes: next ?? 0 }).catch(() => undefined);
+    }
+  }
+
+  function setPlaybackSpeed(speed: number) {
+    const next = Math.max(0.5, Math.min(3, Number.isFinite(speed) ? speed : 1));
+    setPlaybackSpeedState(next);
+    try {
+      localStorage.setItem("aria-playback-speed", String(next));
+    } catch {
+      // best effort
+    }
+    if (nativeAudio) {
+      void AriaAudio.setPlaybackSpeed({ speed: next }).catch(() => undefined);
+    } else if (audioRef.current) {
+      audioRef.current.playbackRate = next;
+    }
+  }
+
+  function setEqualizerPreset(preset: number) {
+    const next = Number.isFinite(preset) ? Math.round(preset) : -1;
+    setEqualizerPresetState(next);
+    try {
+      localStorage.setItem("aria-equalizer-preset", String(next));
+    } catch {
+      // best effort
+    }
+    if (nativeAudio) {
+      void AriaAudio.setEqualizerPreset({ preset: next }).catch(() => undefined);
+    }
+  }
+
+  async function refreshEqualizer() {
+    if (!nativeAudio) return;
+    try {
+      const settings: EqualizerSettings = await AriaAudio.getEqualizerSettings();
+      setEqualizerSupported(settings.supported);
+      setEqualizerPresets(settings.presets);
+      if (settings.supported && settings.current >= 0) {
+        setEqualizerPresetState(settings.current);
+      }
+    } catch {
+      // Equalizer support is device-dependent.
+    }
+  }
+
+  async function downloadTrack(trackId: string) {
+    if (!nativeAudio) {
+      setPlayNotice("离线下载仅在 Android App 中可用");
+      window.setTimeout(() => setPlayNotice(null), 2600);
+      return;
+    }
+    if (downloadingTrackIds.includes(trackId)) return;
+    if (offlineRecords.some((record) => record.track.id === trackId)) {
+      setPlayNotice("这首歌已经在离线音乐里了");
+      window.setTimeout(() => setPlayNotice(null), 2200);
+      return;
+    }
+    const track = trackById.get(trackId) ?? allTracks.find((item) => item.id === trackId);
+    if (!track) return;
+
+    let url: string | undefined;
+    let audioFormat = track.audioFormat ?? null;
+    if (track.source === "netease") {
+      if (directMode) {
+        const meta = await resolveDirectStreamUrl(trackId, targetLevelFor(hifiEnabled, qualityLevel));
+        url = meta?.url ?? undefined;
+        audioFormat = meta?.audioFormat ?? audioFormat;
+      } else {
+        url = playbackStreamUrl(track, streamOptions);
+      }
+    } else if (track.streamUrl?.startsWith("http")) {
+      url = track.streamUrl;
+    }
+    if (!url || url.startsWith("direct:")) {
+      setPlayNotice(track.source === "local" ? "手机本地文件无需下载" : "暂时无法获取下载地址");
+      window.setTimeout(() => setPlayNotice(null), 2600);
+      return;
+    }
+
+    setDownloadingTrackIds((current) => current.includes(trackId) ? current : [...current, trackId]);
+    setPlayNotice(`正在下载「${track.title}」…`);
+    try {
+      const result = await downloadTrackFile({
+        trackId,
+        url,
+        extension: offlineExtension(audioFormat, url),
+      });
+      if (!result.ok || !result.fileUrl || !result.path) {
+        setPlayNotice(result.message || "下载失败，请稍后重试");
+        window.setTimeout(() => setPlayNotice(null), 2800);
+        return;
+      }
+      const offlineTrack: Track = {
+        ...track,
+        streamUrl: result.fileUrl,
+        offline: true,
+        audioFormat,
+      };
+      setOfflineRecords((current) => [
+        {
+          track: offlineTrack,
+          path: result.path as string,
+          size: result.size ?? 0,
+          downloadedAt: Date.now(),
+        },
+        ...current.filter((record) => record.track.id !== trackId),
+      ]);
+      setPlayNotice("已下载到离线音乐");
+      window.setTimeout(() => setPlayNotice(null), 2200);
+    } finally {
+      setDownloadingTrackIds((current) => current.filter((id) => id !== trackId));
+    }
+  }
+
+  async function deleteOfflineTrack(trackId: string) {
+    const record = offlineRecords.find((item) => item.track.id === trackId);
+    if (!record) return;
+    const removed = await deleteDownloadedFile(record.path);
+    setOfflineRecords((current) => current.filter((item) => item.track.id !== trackId));
+    setPlayNotice(removed ? "已删除离线文件" : "已从离线列表移除");
+    window.setTimeout(() => setPlayNotice(null), 2200);
   }
 
   function toggleShuffleQueue() {
@@ -601,11 +939,17 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       else next[trackId] = true;
       return next;
     });
-    setLocalLikedTimes((current) => ({ ...current, [trackId]: Date.now() }));
+    setLocalLikedTimes((current) => {
+      const next = { ...current };
+      if (likedTrackIds[trackId]) delete next[trackId];
+      else next[trackId] = Date.now();
+      return next;
+    });
   }
 
   const currentTime = usePlaybackTime();
   const nativeAudio = useMemo(() => isNativeApp(), []);
+  const [nativeStateReady, setNativeStateReady] = useState(!nativeAudio);
   useEffect(() => {
     if (!nativeAudio) return;
     void AriaAudio.getUsbExclusiveSettings().then(setUsbExclusive).catch(() => undefined);
@@ -662,18 +1006,108 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   // ---- Audio engine wiring: native foreground service (AriaAudio/Media3)
   // inside the app, HTML5 audio element in the plain browser. ----
 
+  // Before React starts driving play/pause, learn whether the foreground
+  // service is already playing. Without this gate the initial
+  // `setPaused({paused: true})` from restored UI state silences a healthy
+  // background session every time the app is reopened.
+  useEffect(() => {
+    if (!nativeAudio) return;
+    let cancelled = false;
+    const fallback = window.setTimeout(() => {
+      if (!cancelled) setNativeStateReady(true);
+    }, 1500);
+    void AriaAudio.getState()
+      .then((state) => {
+        if (cancelled) return;
+        if (state.active && state.trackId) {
+          nativeSessionActiveRef.current = true;
+          const track = trackByIdRef.current.get(state.trackId);
+          if (track) {
+            playbackSessionRef.current.resume(state.trackId, state.requestId ?? "");
+            nativeAdvancedTrackRef.current = state.trackId;
+            setActiveTrackId(state.trackId);
+            if (typeof state.position === "number") commitPlaybackTime(state.position, true);
+            if (typeof state.duration === "number" && state.duration > 0) setDurationSeconds(state.duration);
+            playbackIntentRef.current = true;
+            setPlaying(!state.paused);
+          }
+        }
+        window.clearTimeout(fallback);
+        setNativeStateReady(true);
+      })
+      .catch(() => {
+        window.clearTimeout(fallback);
+        if (!cancelled) setNativeStateReady(true);
+      });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(fallback);
+    };
+  }, [nativeAudio]);
+
+  const streamOptions = useMemo(
+    () => ({ hifiEnabled, level: qualityLevel, directMode }),
+    [hifiEnabled, qualityLevel, directMode],
+  );
+  const nativeStreamUrl = useMemo(
+    () => playbackStreamUrl(activeTrack, streamOptions),
+    [activeTrack, streamOptions],
+  );
+  const webStreamUrl = useMemo(
+    () => playbackStreamUrl(activeTrack, streamOptions),
+    [activeTrack, streamOptions],
+  );
+
   // Rapid double-taps can re-run the load effect for the same track; each run
-  // is a startForegroundService round-trip. Dedupe within a short window.
+  // is a startForegroundService round-trip. Dedupe identical loads in a short
+  // window (the requestId changes every run, so it cannot be part of the key).
   const lastNativeLoadRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
-  const skipGuardRef = useRef(0);
   const directPlaybackRetryRef = useRef<string | null>(null);
   const [playNotice, setPlayNotice] = useState<string | null>(null);
 
+  const markQualitySwitching = useCallback(() => {
+    window.clearTimeout(qualitySwitchTimerRef.current);
+    setQualitySwitching(true);
+    qualitySwitchTimerRef.current = window.setTimeout(() => setQualitySwitching(false), 8000);
+  }, []);
+
+  const finishQualitySwitching = useCallback(() => {
+    window.clearTimeout(qualitySwitchTimerRef.current);
+    setQualitySwitching(false);
+  }, []);
+
+  useEffect(() => () => {
+    window.clearTimeout(qualitySwitchTimerRef.current);
+  }, []);
+
   useEffect(() => {
-    if (!nativeAudio) return;
-    if (!activeTrack.streamUrl) {
+    if (sleepTimerEndsAt == null) {
+      setSleepTimerRemaining(null);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((sleepTimerEndsAt - Date.now()) / 1000));
+      setSleepTimerRemaining((current) => (current === remaining ? current : remaining));
+      if (remaining > 0) return;
+      setSleepTimerEndsAt(null);
+      playbackIntentRef.current = false;
+      setPlaying(false);
+      setPlayNotice("睡眠定时已结束，播放已暂停");
+      window.setTimeout(() => setPlayNotice(null), 2600);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [sleepTimerEndsAt]);
+
+  useEffect(() => {
+    if (!nativeAudio || !nativeStateReady) return;
+    if (!nativeStreamUrl) {
       setNativeQuality(null);
-      void AriaAudio.stop().catch(() => undefined);
+      resolvedQualityRef.current = null;
+      reloadPositionRef.current = 0;
+      pendingSeekRef.current = 0;
+      if (!nativeSessionActiveRef.current) void AriaAudio.stop().catch(() => undefined);
       return;
     }
     // Media3 can move to a preloaded item without a second load request. The
@@ -681,98 +1115,102 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     // the already-playing item and turn a gapless change into a rebuffer.
     if (nativeAdvancedTrackRef.current === activeTrack.id) {
       nativeAdvancedTrackRef.current = null;
+      reloadPositionRef.current = 0;
+      pendingSeekRef.current = 0;
+      return;
+    }
+    // Do not start a foreground service just to preload a paused, restored
+    // track on app launch. A quality switch while paused intentionally asks
+    // for a reload (reloadPositionRef > 0).
+    if (!playing && reloadPositionRef.current <= 0) return;
+    setNativeQuality(null);
+    const loadKey = `${activeTrack.id}|${nativeStreamUrl}|${playRequest}`;
+    if (loadKey === lastNativeLoadRef.current.key && Date.now() - lastNativeLoadRef.current.at < 500) return;
+    lastNativeLoadRef.current = { key: loadKey, at: Date.now() };
+    // Boot-restored tracks still carry the direct: sentinel — they stay
+    // unloaded until the user taps play (which resolves first).
+    if (nativeStreamUrl.startsWith("direct:")) {
+      reloadPositionRef.current = 0;
+      pendingSeekRef.current = 0;
       return;
     }
     const requestId = playbackSessionRef.current.begin(activeTrack.id);
-    setNativeQuality(null);
-    const loadKey = `${requestId}|${activeTrack.streamUrl}`;
-    if (loadKey === lastNativeLoadRef.current.key && Date.now() - lastNativeLoadRef.current.at < 500) return;
-    lastNativeLoadRef.current = { key: loadKey, at: Date.now() };
-    resetPlaybackTime();
-    setDurationSeconds(0);
-    // Boot-restored tracks still carry the direct: sentinel — they stay
-    // unloaded until the user taps play (which resolves first).
-    if (activeTrack.streamUrl.startsWith("direct:")) return;
-    const streamUrl = activeTrack.streamUrl;
+    const resumeAt = reloadPositionRef.current;
+    reloadPositionRef.current = 0;
+    if (resumeAt <= 0) {
+      resetPlaybackTime();
+      setDurationSeconds(0);
+    }
+    const queueTracks = playQueueTracks.length ? playQueueTracks : playableTracks(allTracks);
+    const queue = buildNativeQueue(queueTracks, {
+      ...streamOptions,
+      activeTrack,
+    });
     // Streams are resolved at click time (chooseTrack) — this effect only
-    // forwards an already-real url to the native player.
+    // forwards an already-real url plus the queue the native service owns.
     void (playbackSessionRef.current.isCurrent(requestId) ? AriaAudio.load({
-      url: streamUrl,
+      url: nativeStreamUrl,
       requestId,
       trackId: activeTrack.id,
       title: activeTrack.title,
       artist: activeTrack.artist,
       album: activeTrack.album,
-      artworkUrl: activeTrack.coverUrl ?? (activeTrack.cover.startsWith("http") ? activeTrack.cover : undefined),
+      artworkUrl: trackArtworkUrl(activeTrack),
+      position: resumeAt > 0 ? resumeAt : undefined,
       paused: !playing,
       volume: Math.min(1, Math.max(0, volume / 100)),
-      }) : Promise.resolve())
-      .catch(() => setPlaying(false));
-  }, [nativeAudio, activeTrack.id, activeTrack.streamUrl, playRequest]);
+      speed: playbackSpeed,
+      equalizerPreset,
+      repeatMode,
+      queue,
+    }) : Promise.resolve())
+      .catch(() => {
+        finishQualitySwitching();
+        setPlaying(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeAudio, nativeStateReady, activeTrack.id, nativeStreamUrl, playRequest]);
 
   useEffect(() => {
-    if (!nativeAudio) return;
+    if (!nativeAudio || !nativeStateReady) return;
     void AriaAudio.setPaused({ paused: !playing }).catch(() => undefined);
-  }, [nativeAudio, playing]);
+  }, [nativeAudio, nativeStateReady, playing]);
+
+  useEffect(() => {
+    if (!nativeAudio || !nativeStateReady) return;
+    void AriaAudio.setRepeatMode({ repeatMode }).catch(() => undefined);
+  }, [nativeAudio, nativeStateReady, repeatMode]);
+
+  useEffect(() => {
+    if (!nativeAudio || !nativeStateReady) return;
+    void AriaAudio.setPlaybackSpeed({ speed: playbackSpeed }).catch(() => undefined);
+  }, [nativeAudio, nativeStateReady, playbackSpeed]);
 
   useEffect(() => {
     if (!nativeAudio) return;
+    const timer = window.setTimeout(() => void refreshEqualizer(), 1400);
+    return () => window.clearTimeout(timer);
+  }, [nativeAudio, nativeStateReady]);
 
-    async function preloadNextNative(requestId: string) {
-      if (!requestId || nativePreloadBusyRef.current) return;
-      const queue = playQueueTracks.length ? playQueueTracks : playableTracks(allTracks);
-      if (!queue.length) return;
-      const currentIndex = queue.findIndex((track) => track.id === activeTrack.id);
-      const nextTrack = queue[(Math.max(0, currentIndex) + 1) % queue.length];
-      if (!nextTrack?.streamUrl) return;
-      const key = `${requestId}|${activeTrack.id}|${nextTrack.id}|${nextTrack.streamUrl}`;
-      if (nativePreloadKeyRef.current === key) return;
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || nativeAudio) return;
+    audio.playbackRate = playbackSpeed;
+  }, [nativeAudio, playbackSpeed, activeTrack.id]);
 
-      nativePreloadBusyRef.current = true;
-      try {
-        let streamUrl = nextTrack.streamUrl;
-        if (directMode && nextTrack.source === "netease" && streamUrl.startsWith("direct:")) {
-          const meta = await resolveDirectStreamUrl(
-            nextTrack.id,
-            targetLevelFor(nextTrack, hifiEnabled, qualityLevel),
-          );
-          if (!meta?.url) return;
-          streamUrl = meta.url;
-          applyTrackUpdate(nextTrack.id, (track) => ({
-            ...track,
-            streamUrl,
-            bitrate: meta.bitrate,
-            sampleRate: meta.sampleRate,
-            audioFormat: meta.audioFormat,
-            quality: meta.quality ?? track.quality,
-            currentLevel: meta.currentLevel ?? track.currentLevel,
-            availableLevels: meta.availableLevels ?? track.availableLevels,
-          }));
-        }
-        await AriaAudio.loadNext({
-          requestId,
-          url: streamUrl,
-          trackId: nextTrack.id,
-          title: nextTrack.title,
-          artist: nextTrack.artist,
-          album: nextTrack.album,
-          artworkUrl: nextTrack.coverUrl ?? (nextTrack.cover.startsWith("http") ? nextTrack.cover : undefined),
-        });
-        nativePreloadKeyRef.current = key;
-      } catch {
-        // The normal ended handler remains the fallback when preloading fails.
-      } finally {
-        nativePreloadBusyRef.current = false;
-      }
-    }
+  useEffect(() => {
+    if (!nativeAudio) return;
 
     const handleEvent = (event: AriaAudioEvent) => {
       if (event.kind === "advanced") {
         if (!event.trackId || !playbackSessionRef.current.adoptAdvanced(event.trackId, event.requestId ?? "")) return;
-        nativeAdvancedTrackRef.current = event.trackId;
-        nativePreloadKeyRef.current = "";
+        // Only suppress the load effect when the native item differs from the
+        // track React has rendered. Setting this for a same-id repeat leaves a
+        // stale marker that would swallow the next real load request.
+        nativeAdvancedTrackRef.current = event.trackId !== activeTrackIdRef.current ? event.trackId : null;
         setActiveTrackId(event.trackId);
-        resetPlaybackTime();
+        if (typeof event.position === "number") commitPlaybackTime(event.position, true);
+        else resetPlaybackTime();
         setDurationSeconds(event.duration && event.duration > 0 ? event.duration : 0);
         playbackIntentRef.current = true;
         setPlaying(true);
@@ -780,15 +1218,27 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       }
       if (!playbackSessionRef.current.accept(event)) return;
       if ((event.kind === "loaded" || event.kind === "progress") && event.audioFormat) {
-        const quality: PlaybackQuality = {
-          audioFormat: event.audioFormat,
-          bitrate: positiveAudioValue(event.bitrate),
-          sampleRate: positiveAudioValue(event.sampleRate),
-        };
-        setNativeQuality((previous) => previous && previous.requestId === event.requestId
-          && previous.quality.audioFormat === quality.audioFormat && previous.quality.bitrate === quality.bitrate
-          && previous.quality.sampleRate === quality.sampleRate ? previous
-          : { trackId: activeTrack.id, requestId: event.requestId!, quality });
+        const audioFormat = event.audioFormat;
+        const trackId = event.trackId || activeTrackIdRef.current;
+        setNativeQuality((previous) => {
+          const prior = previous && previous.requestId === event.requestId
+            && previous.trackId === trackId
+            && previous.quality.audioFormat === audioFormat
+            ? previous
+            : null;
+          const quality: PlaybackQuality = {
+            audioFormat,
+            // Progress events can arrive without a measured bitrate right
+            // after the WebView resumes. Keep the last known value instead of
+            // blanking the quality row.
+            bitrate: positiveAudioValue(event.bitrate) ?? prior?.quality.bitrate ?? null,
+            sampleRate: positiveAudioValue(event.sampleRate) ?? prior?.quality.sampleRate ?? null,
+          };
+          if (prior && prior.quality.bitrate === quality.bitrate && prior.quality.sampleRate === quality.sampleRate) {
+            return prior;
+          }
+          return { trackId, requestId: event.requestId!, quality };
+        });
       }
       if (event.kind === "like") {
         toggleLikeTrack(activeTrack.id);
@@ -802,15 +1252,15 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         if (typeof event.position === "number") commitPlaybackTime(event.position);
         if (typeof event.duration === "number" && event.duration > 0) {
           setDurationSeconds((current) => (Math.abs(current - event.duration!) > 0.5 ? event.duration! : current));
-          if (event.position !== undefined && event.duration - event.position <= 8) {
-            void preloadNextNative(event.requestId ?? playbackSessionRef.current.requestId);
-          }
         }
         return;
       }
       if (event.kind === "loaded") {
+        finishQualitySwitching();
+        directPlaybackRetryRef.current = null;
         if (typeof event.duration === "number" && event.duration > 0) setDurationSeconds(event.duration);
         if (typeof event.position === "number" && event.position > 0) commitPlaybackTime(event.position, true);
+        void refreshEqualizer();
         return;
       }
       if (event.kind === "state") {
@@ -824,6 +1274,8 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       }
       if (event.kind === "error") {
         setNativeQuality(null);
+        resolvedQualityRef.current = null;
+        finishQualitySwitching();
         setPlaying(false);
         const failedTrackId = event.trackId || activeTrack.id;
         if (directMode && failedTrackId === activeTrack.id && directPlaybackRetryRef.current !== failedTrackId) {
@@ -831,7 +1283,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
           const numericId = failedTrackId.replace(/^netease:/, "");
           applyTrackUpdate(failedTrackId, (track) => ({ ...track, streamUrl: `direct:${track.providerId ?? numericId}` }));
           window.setTimeout(() => {
-            void chooseTrack(failedTrackId, [getActiveTrackRef.current()]);
+            // Reuse the original queue; passing a one-track queue here used to
+            // wipe the rest of the playlist after a stream failure.
+            void chooseTrack(failedTrackId);
           }, 120);
           return;
         }
@@ -851,20 +1305,73 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     };
   }, [nativeAudio]);
 
+  // The native service keeps playing while the WebView is frozen. When the
+  // user returns, adopt whatever item the service actually reached instead of
+  // showing the track React last saw.
+  useEffect(() => {
+    if (!nativeAudio) return;
+    let cancelled = false;
+
+    const syncFromNative = async () => {
+      try {
+        const state = await AriaAudio.getState();
+        if (cancelled) return;
+        nativeSessionActiveRef.current = state.active;
+        if (!state.active) return;
+        const track = state.trackId ? trackByIdRef.current.get(state.trackId) : undefined;
+        if (state.trackId && state.trackId !== activeTrackIdRef.current) {
+          if (!track) return;
+          playbackSessionRef.current.resume(state.trackId, state.requestId ?? "");
+          nativeAdvancedTrackRef.current = state.trackId;
+          setActiveTrackId(state.trackId);
+        } else if (state.trackId) {
+          playbackSessionRef.current.resume(state.trackId, state.requestId ?? "");
+        }
+        if (typeof state.position === "number") commitPlaybackTime(state.position, true);
+        if (typeof state.duration === "number" && state.duration > 0) setDurationSeconds(state.duration);
+        playbackIntentRef.current = true;
+        setPlaying(!state.paused);
+      } catch {
+        // Service may be gone after a process restart; the next play recreates it.
+      }
+    };
+
+    let handle: { remove(): void } | null = null;
+    void CapacitorApp.addListener("resume", () => void syncFromNative()).then((handleRef) => {
+      handle = handleRef;
+    });
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void syncFromNative();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      handle?.remove();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [nativeAudio]);
+
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || nativeAudio) return;
-    if (!activeTrack.streamUrl) {
+    if (!webStreamUrl) {
       audio.removeAttribute("src");
       audio.pause();
       return;
     }
-    resetPlaybackTime();
-    setDurationSeconds(0);
+    if (pendingSeekRef.current <= 0) {
+      resetPlaybackTime();
+      setDurationSeconds(0);
+    }
     audio.pause();
-    audio.src = playbackStreamUrl(activeTrack, hifiEnabled, qualityLevel) ?? "";
+    audio.src = webStreamUrl;
     audio.load();
-  }, [nativeAudio, activeTrack.id, activeTrack.streamUrl, hifiEnabled, qualityLevel, playRequest]);
+    // Swapping the source (for example when the quality is changed live) must
+    // not turn a playing track into silence.
+    if (playing) audio.play().catch(() => setPlaying(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeAudio, activeTrack.id, webStreamUrl, playRequest]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -896,6 +1403,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         commitPlaybackTime(pendingSeekRef.current, true);
         pendingSeekRef.current = 0;
       }
+      finishQualitySwitching();
     };
     const onEnded = () => handleTrackEndedRef.current();
     audio.addEventListener("timeupdate", onTimeUpdate);
@@ -941,19 +1449,28 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     navigator.mediaSession.setActionHandler("nexttrack", () => pickRelativeTrack(1));
   }, [activeTrack, playing]);
 
+  const cachedActiveTrackSnapshot = useMemo(
+    () => activeTrack.id === idleTrack.id ? undefined : createCachedQueueSnapshots([compactTrack(activeTrack)], 1)[0],
+    [activeTrack],
+  );
+  const cachedQueueSnapshots = useMemo(
+    () => createCachedQueueSnapshots(playQueueTracks.map(compactTrack)),
+    [playQueueTracks],
+  );
+
   useEffect(() => {
     writeCachedPlayerState({
       activeTrackId: activeTrack.id === idleTrack.id ? undefined : activeTrack.id,
-      activeTrackSnapshot: activeTrack.id === idleTrack.id ? undefined : createPlayerCacheSnapshot(activeTrack),
+      activeTrackSnapshot: cachedActiveTrackSnapshot,
       playQueueIds: playQueueIds.slice(0, 1200),
-      playQueueSnapshots: playQueueTracks.slice(0, 1200).map((track) => createPlayerCacheSnapshot(track)),
+      playQueueSnapshots: cachedQueueSnapshots,
       volume,
       qualityLevel,
       shuffleEnabled,
       repeatMode,
       playing: false,
     });
-  }, [activeTrack, playQueueIds, playQueueTracks, volume, qualityLevel, shuffleEnabled, repeatMode]);
+  }, [activeTrack.id, cachedActiveTrackSnapshot, cachedQueueSnapshots, playQueueIds, volume, qualityLevel, shuffleEnabled, repeatMode]);
 
   useEffect(() => {
     window.localStorage.setItem("aria-liked-track-ids", JSON.stringify(likedTrackIds));
@@ -964,6 +1481,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   useEffect(() => {
     writePlayHistory(playHistory);
   }, [playHistory]);
+  useEffect(() => {
+    writeOfflineRecords(offlineRecords.map(compactOfflineRecord));
+  }, [offlineRecords]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void saveLibrary({
@@ -1056,7 +1576,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     [localTracks, deviceTracks, likedTrackIds, localLikedTimes],
   );
   const likedNeteaseTracks = useMemo(
-    () => newestLiked(neteaseLikedTracks.filter((track) => neteaseLikedIds[track.id] || track.likedAt)),
+    () => newestLiked(neteaseLikedTracks.filter((track) => Boolean(neteaseLikedIds[track.id]))),
     [neteaseLikedTracks, neteaseLikedIds],
   );
   const historyTracks = useMemo(() => {
@@ -1078,15 +1598,32 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     addDeviceTracks: (tracks: Track[]) => setDeviceTracks(tracks),
     activeTrack,
     activeTrackId,
-    actualQuality: nativeQuality?.trackId === activeTrack.id && nativeQuality.requestId === playbackSessionRef.current.requestId ? nativeQuality.quality : null,
+    actualQuality: nativeQuality?.trackId === activeTrack.id && nativeQuality.requestId === playbackSessionRef.current.requestId
+      ? nativeQuality.quality
+      : resolvedQualityRef.current?.trackId === activeTrack.id
+        ? resolvedQualityRef.current.quality
+        : null,
     playing,
     currentTime,
     durationSeconds,
     volume,
+    sleepTimerRemaining,
+    setSleepTimer,
+    playbackSpeed,
+    setPlaybackSpeed,
+    equalizerSupported,
+    equalizerPresets,
+    equalizerPreset,
+    setEqualizerPreset,
+    offlineTracks,
+    downloadingTrackIds,
+    downloadTrack,
+    deleteOfflineTrack,
     shuffleEnabled,
     repeatMode,
     hifiEnabled,
     qualityLevel,
+    qualitySwitching,
     playQueueTracks,
     localTracks,
     likedLocalTracks,
@@ -1112,9 +1649,23 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     connection: getApiConnection(),
     searchQuery,
     chooseTrack,
+    playShuffledTracks,
     togglePlayback,
     playNext: () => pickRelativeTrack(1),
     playPrevious: () => pickRelativeTrack(-1),
+    clearQueue: () => setPlayQueueIds(activeTrack.id === idleTrack.id ? [] : [activeTrack.id]),
+    reorderQueue: (trackIds: string[]) => setPlayQueueIds((current) => {
+      const visible = new Set(trackIds);
+      const rest = current.filter((id) => !visible.has(id));
+      return [...trackIds, ...rest];
+    }),
+    removeFromQueue: (trackId: string) => setPlayQueueIds((current) => current.filter((id) => id !== trackId)),
+    playNextInQueue: (trackId: string) => setPlayQueueIds((current) => {
+      const without = current.filter((id) => id !== trackId);
+      const activeIndex = without.indexOf(activeTrack.id);
+      if (activeIndex < 0) return [trackId, ...without];
+      return [...without.slice(0, activeIndex + 1), trackId, ...without.slice(activeIndex + 1)];
+    }),
     seekTo,
     setVolume,
     toggleShuffle: toggleShuffleQueue,
@@ -1126,8 +1677,8 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     refreshRoamData,
     setSelectedArtist,
     setSearchQuery,
-    setHifiEnabled,
-    setQualityLevel,
+    setHifiEnabled: changeHifiPreference,
+    setQualityLevel: changeQualityLevel,
     usbExclusive,
     setUsbExclusiveEnabled: async (enabled: boolean) => {
       const next = await AriaAudio.setUsbExclusiveEnabled({ enabled });
@@ -1181,22 +1732,33 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   );
 }
 
-function targetLevelFor(_track: Track, hifi: boolean, level: QualityLevel): QualityLevel {
-  // The catalog maxbr is not authoritative (it commonly reports 320K for
-  // songs that a VIP account can stream losslessly). Let songUrlV1 decide.
-  return hifi ? "jymaster" : level;
-}
-
-// Lossless pipeline: the stream route defaults to lossless server-side, and
-// the level query parameter selects the tier the user picked (HiFi takes the
-// highest tier the track actually offers). Applies on the next track load.
-function playbackStreamUrl(track: Track, hifi: boolean, level: QualityLevel): string | undefined {
-  if (!track.streamUrl) return undefined;
-  if (track.source !== "netease") return track.streamUrl;
-  // Direct-mode sentinel: resolved against songUrlV1 at load time.
-  if (track.streamUrl.startsWith("direct:")) return track.streamUrl;
-  const separator = track.streamUrl.includes("?") ? "&" : "?";
-  return `${track.streamUrl}${separator}level=${targetLevelFor(track, hifi, level)}`;
+function offlineExtension(audioFormat?: string | null, url?: string): string {
+  const format = (audioFormat ?? "").toLowerCase();
+  const mimeNames: Record<string, string> = {
+    "audio/flac": "flac",
+    flac: "flac",
+    "audio/mpeg": "mp3",
+    mp3: "mp3",
+    "audio/mp4a-latm": "m4a",
+    m4a: "m4a",
+    "audio/aac": "aac",
+    aac: "aac",
+    "audio/ogg": "ogg",
+    ogg: "ogg",
+    "audio/opus": "opus",
+    opus: "opus",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    wav: "wav",
+  };
+  if (mimeNames[format]) return mimeNames[format];
+  try {
+    const extension = new URL(url ?? "").pathname.split(".").pop()?.toLowerCase() ?? "";
+    if (/^(mp3|flac|m4a|aac|ogg|opus|wav)$/.test(extension)) return extension;
+  } catch {
+    // Fall through to the generic extension.
+  }
+  return "audio";
 }
 
 function StatusBarIconsSync({ light }: { light: boolean }) {

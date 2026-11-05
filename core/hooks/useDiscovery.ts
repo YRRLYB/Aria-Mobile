@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Track } from "@/data/music";
 import type { ArtistSummary } from "@/lib/artists";
 import { createLocalArtistSummaries, mergeArtists, providerArtistToUiArtist } from "@/lib/artists";
-import { api } from "@/lib/api";
+import { api, type ProviderPlaylist } from "@/lib/api";
 import { memoryLimits, trimRecordCache, trimStringSet } from "@/lib/memoryCache";
 import { mergeTracks, splitArtistNames, trimTrackCache } from "@/lib/playerPresentation";
 import { providerTrackToUiTrack, localTrackToUiTrack } from "@/lib/trackMappers";
@@ -11,9 +11,10 @@ export type SearchBundle = {
   localTracks: Track[];
   neteaseTracks: Track[];
   artists: ArtistSummary[];
+  playlists: ProviderPlaylist[];
 };
 
-const emptySearchBundle: SearchBundle = { localTracks: [], neteaseTracks: [], artists: [] };
+const emptySearchBundle: SearchBundle = { localTracks: [], neteaseTracks: [], artists: [], playlists: [] };
 
 // Owns search + artist discovery: debounced library/stream search, artist
 // drill-down with remote track merging, and artist avatar lookups.
@@ -71,6 +72,9 @@ export function useDiscovery(options: {
           (artist) => artist.source !== "local" && artist.name.toLowerCase().includes(text.toLowerCase()),
         ),
       ]).slice(0, 18),
+      playlists: current.playlists.filter((playlist) =>
+        [playlist.name, playlist.creatorName ?? ""].join(" ").toLowerCase().includes(text.toLowerCase()),
+      ),
     }));
     setSearchLoading(true);
 
@@ -88,6 +92,7 @@ export function useDiscovery(options: {
             localTracks: mergeTracks([...localMatches, ...localUiTracks]).slice(0, 28),
             neteaseTracks: neteaseUiTracks,
             artists: mergeArtists([...localArtists, ...remoteArtists]).slice(0, 18),
+            playlists: result.playlists.slice(0, 18),
           });
         })
         .catch(() => {
@@ -96,6 +101,7 @@ export function useDiscovery(options: {
               localTracks: localMatches.slice(0, 28),
               neteaseTracks: [],
               artists: localArtists,
+              playlists: [],
             });
           }
         })

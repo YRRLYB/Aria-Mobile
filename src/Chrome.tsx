@@ -1,8 +1,9 @@
-import { Home, Library, Pause, Play, Search, Settings, SkipForward } from "lucide-react";
+import { Home, Library, Pause, Play, Search, Settings, SkipBack, SkipForward } from "./icons";
 import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { idleTrack } from "@/lib/trackMappers";
 import type { MobileControls, TabId } from "./MobileApp";
+import { cachedCoverUrl } from "./coverCache";
 
 const tabs: Array<{ id: TabId; label: string; Icon: typeof Home }> = [
   { id: "home", label: "首页", Icon: Home },
@@ -37,7 +38,7 @@ export function TabBar({ activeTab, onSelect }: { activeTab: TabId; onSelect: (t
 }
 
 export function MiniPlayer(controls: MobileControls) {
-  const { activeTrack, playing, togglePlayback, playNext, openNowPlaying } = controls;
+  const { activeTrack, playing, togglePlayback, playPrevious, playNext, openNowPlaying } = controls;
   if (activeTrack.id === idleTrack.id) return null;
   return (
     <motion.div
@@ -54,6 +55,17 @@ export function MiniPlayer(controls: MobileControls) {
         <p className="truncate text-sm font-semibold">{activeTrack.title}</p>
         <p className="mt-0.5 truncate text-xs text-neutral-500">{activeTrack.artist}</p>
       </div>
+      </button>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          playPrevious();
+        }}
+        className="tap-scale flex size-9 items-center justify-center rounded-full bg-neutral-950/[0.05] text-neutral-700"
+        aria-label="上一首"
+      >
+        <SkipBack className="size-4" />
       </button>
       <button
         type="button"
@@ -111,19 +123,112 @@ export function TrackCover({
   );
 }
 
+export function CoverCollage({
+  tracks,
+  className = "",
+  priority = false,
+}: {
+  tracks: Array<{ id: string; cover?: string; coverUrl?: string; title: string }>;
+  className?: string;
+  priority?: boolean;
+}) {
+  const covers = tracks.slice(0, 4);
+  if (!covers.length) return null;
+  if (covers.length === 1) {
+    return <TrackCover track={covers[0]} className={className} priority={priority} />;
+  }
+  return (
+    <div className={`grid grid-cols-2 grid-rows-2 gap-0.5 overflow-hidden bg-white/70 shadow-sm ${className}`}>
+      {Array.from({ length: 4 }).map((_, index) => {
+        const track = covers[index % covers.length];
+        return (
+          <TrackCover
+            key={`${track.id}-${index}`}
+            track={track}
+            className="aspect-square w-full"
+            priority={priority}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 function CoverImage({ src, priority }: { src: string; priority: boolean }) {
+  const holderRef = useRef<HTMLSpanElement | null>(null);
+  const [visible, setVisible] = useState(priority);
+  const [resolved, setResolved] = useState(() => (/^https?:/i.test(src) ? "" : src));
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (priority) {
+      setVisible(true);
+      return;
+    }
+    const element = holderRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [priority]);
+
+  useEffect(() => {
+    let mounted = true;
+    const remote = /^https?:/i.test(src);
+    setResolved(remote ? "" : src);
+    setFailed(false);
+    if (!visible) return () => { mounted = false; };
+    void cachedCoverUrl(src).then((next) => {
+      if (mounted && next) setResolved(next);
+    });
+    return () => { mounted = false; };
+  }, [src, visible, attempt]);
+
   useEffect(() => {
     if (!failed || attempt >= 2) return;
-    const retry = () => { setAttempt((value) => value + 1); setFailed(false); };
+    const retry = () => {
+      setAttempt((value) => value + 1);
+      setFailed(false);
+    };
     const timer = window.setTimeout(retry, (attempt + 1) * 1500);
     window.addEventListener("online", retry, { once: true });
-    return () => { window.clearTimeout(timer); window.removeEventListener("online", retry); };
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("online", retry);
+    };
   }, [failed, attempt]);
-  return failed ? null : <img key={attempt} src={src} alt="" loading={priority ? "eager" : "lazy"}
-    decoding="async" draggable={false} onError={() => setFailed(true)}
-    className="absolute inset-0 h-full w-full object-cover" />;
+
+  return (
+    <span ref={holderRef} className="absolute inset-0">
+      {visible && !failed && resolved && (
+        <img
+          key={`${resolved}-${attempt}`}
+          src={resolved}
+          alt=""
+          loading={priority ? "eager" : "lazy"}
+          decoding="async"
+          draggable={false}
+          onError={() => {
+            if (resolved !== src) setResolved(src);
+            else setFailed(true);
+          }}
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      )}
+    </span>
+  );
 }
 
 function isHexTint(value: string): boolean {

@@ -11,12 +11,16 @@ import android.provider.Settings;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import org.json.JSONObject;
+
+import java.util.ArrayList;
 import java.util.Map;
 
 /**
@@ -70,8 +74,34 @@ public class AriaAudioPlugin extends Plugin {
         bundle.putDouble("position", call.getDouble("position", 0.0));
         bundle.putDouble("volume", call.getDouble("volume", 1.0));
         bundle.putBoolean("paused", Boolean.TRUE.equals(call.getBoolean("paused", false)));
+        bundle.putString("repeatMode", orEmpty(call.getString("repeatMode", "all")));
+        bundle.putDouble("speed", call.getDouble("speed", 1.0));
+        bundle.putInt("equalizerPreset", call.getInt("equalizerPreset", -1));
+        bundle.putParcelableArrayList("queue", queueBundles(call));
         AriaPlaybackService.startWithLoad(getContext(), bundle);
         call.resolve();
+    }
+
+    /** JSON queue items -> Parcelable bundles carried inside the LOAD intent. */
+    private static ArrayList<Bundle> queueBundles(PluginCall call) {
+        ArrayList<Bundle> items = new ArrayList<>();
+        JSArray queue = call.getArray("queue");
+        if (queue == null) return items;
+        for (int index = 0; index < queue.length(); index++) {
+            JSONObject item = queue.optJSONObject(index);
+            if (item == null) continue;
+            Bundle bundle = new Bundle();
+            bundle.putString("trackId", item.optString("trackId", ""));
+            bundle.putString("url", item.optString("url", ""));
+            bundle.putString("directId", item.optString("directId", ""));
+            bundle.putString("level", item.optString("level", ""));
+            bundle.putString("title", item.optString("title", ""));
+            bundle.putString("artist", item.optString("artist", ""));
+            bundle.putString("album", item.optString("album", ""));
+            bundle.putString("artworkUrl", item.optString("artworkUrl", ""));
+            if (!bundle.getString("trackId", "").isEmpty()) items.add(bundle);
+        }
+        return items;
     }
 
     @PluginMethod
@@ -110,11 +140,55 @@ public class AriaAudioPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void setRepeatMode(PluginCall call) {
+        AriaPlaybackService.setRepeatMode(orEmpty(call.getString("repeatMode", "all")));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void skip(PluginCall call) {
+        boolean next = !"previous".equals(call.getString("direction"));
+        AriaPlaybackService.requestSkip(next);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setSleepTimer(PluginCall call) {
+        AriaPlaybackService.setSleepTimer(call.getInt("minutes", 0));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setPlaybackSpeed(PluginCall call) {
+        AriaPlaybackService.setPlaybackSpeed(call.getDouble("speed", 1.0).floatValue());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getEqualizerSettings(PluginCall call) {
+        Map<String, Object> settings = AriaPlaybackService.getEqualizerSettings();
+        JSObject result = new JSObject();
+        result.put("supported", Boolean.TRUE.equals(settings.get("supported")));
+        result.put("enabled", Boolean.TRUE.equals(settings.get("enabled")));
+        result.put("current", settings.get("current") instanceof Integer ? settings.get("current") : -1);
+        JSArray presets = new JSArray();
+        Object list = settings.get("presets");
+        if (list instanceof java.util.List) {
+            for (Object name : (java.util.List<?>) list) presets.put(String.valueOf(name));
+        }
+        result.put("presets", presets);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void setEqualizerPreset(PluginCall call) {
+        AriaPlaybackService.setEqualizerPreset(call.getInt("preset", -1));
+        call.resolve();
+    }
+
+    @PluginMethod
     public void stop(PluginCall call) {
-        AriaPlaybackService.withPlayer(player -> {
-            player.stop();
-            player.clearMediaItems();
-        });
+        AriaPlaybackService.stopPlayback();
         call.resolve();
     }
 
@@ -126,6 +200,7 @@ public class AriaAudioPlugin extends Plugin {
         state.put("duration", 0.0);
         state.put("paused", true);
         state.put("trackId", null);
+        state.put("requestId", null);
         AriaPlaybackService.withPlayer(player -> {
             state.put("active", player.getCurrentMediaItem() != null);
             state.put("position", player.getCurrentPosition() / 1000.0);
@@ -135,6 +210,7 @@ public class AriaAudioPlugin extends Plugin {
             androidx.media3.common.MediaItem item = player.getCurrentMediaItem();
             if (item != null && item.mediaMetadata != null && item.mediaMetadata.extras != null) {
                 state.put("trackId", item.mediaMetadata.extras.getString("trackId"));
+                state.put("requestId", item.mediaMetadata.extras.getString("requestId", ""));
             }
         });
         call.resolve(state);
@@ -198,7 +274,9 @@ public class AriaAudioPlugin extends Plugin {
     public void setLockScreenEnabled(PluginCall call) {
         boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
         getContext().getSharedPreferences("aria-lock-screen", 0).edit().putBoolean("enabled", enabled).apply();
-        if (!enabled) getActivity().runOnUiThread(LockPlayerActivity::dismiss);
+        if (!enabled) {
+            if (getActivity() != null) getActivity().runOnUiThread(LockPlayerActivity::dismiss);
+        }
         call.resolve();
     }
 

@@ -30,6 +30,17 @@ export class PlaybackSession {
     return true;
   }
 
+  // Reconnect to a service that kept playing while the WebView was gone. The
+  // request id belongs to the native item, not to a new JS load.
+  resume(trackId: string, requestId: string) {
+    if (!trackId || !requestId) return false;
+    this.requestId = requestId;
+    this.trackId = trackId;
+    this.ready = true;
+    this.finished = false;
+    return true;
+  }
+
   accept(event: AriaAudioEvent) {
     if (!this.requestId || event.requestId !== this.requestId || event.trackId !== this.trackId || this.finished) return false;
     // The web queue is the sole owner of advancement. Manual native loads

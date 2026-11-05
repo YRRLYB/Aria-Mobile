@@ -6,12 +6,12 @@
 
 Aria Mobile 是 Aria 桌面端的 Android 音乐播放器，支持局域网伴侣模式和网易云音乐直连模式。
 
-## 最新 Beta
+## 最新版本
 
-- 版本：`0.4.17-beta.0`
-- Android versionCode：`37`
-- 最新 APK：[Aria-mobile-0.4.17-beta.0.apk](https://github.com/YRRLYB/Aria-Mobile/releases/download/v0.4.17-beta.0/Aria-mobile-0.4.17-beta.0.apk)
-- Beta 发布页：[v0.4.17-beta.0](https://github.com/YRRLYB/Aria-Mobile/releases/tag/v0.4.17-beta.0)
+- 版本：`0.5.3`
+- Android versionCode：`41`
+- 构建产物：`Aria-Mobile-0.5.3.apk`
+- 本版本为本地正式构建，GitHub Release 待发布。
 
 ## 主要功能
 

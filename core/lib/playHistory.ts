@@ -11,11 +11,23 @@ export type PlayHistoryEntry = {
 const playHistoryCacheKey = "aria-play-history";
 
 export function createPlayerCacheSnapshot(track: Track): Track {
-  const snapshot = { ...track };
+  const snapshot = {
+    ...track,
+    // Lyrics live in their own bounded cache and are re-attached when a
+    // snapshot is read. Keeping them inside every history/queue entry made
+    // localStorage grow into multi-megabyte writes.
+    lyrics: [] as Track["lyrics"],
+    waveform: [] as Track["waveform"],
+  };
   // Artwork overrides are persisted separately. Avoid duplicating up to
   // ~900KB data URLs in every history/player snapshot.
   if (snapshot.coverUrl?.startsWith("data:")) {
     snapshot.coverUrl = undefined;
+  }
+  if (snapshot.source === "netease" && snapshot.streamUrl?.startsWith("http")
+      && !snapshot.streamUrl.includes("/api/")) {
+    // CDN links expire; re-resolve by id on the next play (direct mode).
+    snapshot.streamUrl = `direct:${snapshot.providerId ?? snapshot.id.replace(/^netease:/, "")}`;
   }
   return snapshot;
 }

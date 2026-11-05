@@ -1,5 +1,7 @@
 import type { Track } from "@/data/music";
 import type { ProviderPlaylist } from "@/lib/api";
+import { readCachedArtworkOverride } from "@/lib/artworkOverrides";
+import { readCachedLyrics } from "@/lib/playerPresentation";
 
 export type LibrarySnapshot = {
   daily: Track[];
@@ -21,6 +23,31 @@ function openDatabase() {
   });
 }
 
+function hydrateTrack(track: Track): Track {
+  const lyrics = Array.isArray(track.lyrics) && track.lyrics.length ? track.lyrics : readCachedLyrics(track.id);
+  const coverUrl = readCachedArtworkOverride(track.id) ?? track.coverUrl;
+  return {
+    ...track,
+    coverUrl,
+    waveform: Array.isArray(track.waveform) ? track.waveform : [],
+    lyrics: Array.isArray(lyrics) ? lyrics : [],
+    lyricStatus: lyrics.length
+      ? "linked"
+      : track.lyricStatus === "linked" ? "searchable" : track.lyricStatus,
+  };
+}
+
+function hydrateSnapshot(saved: Partial<LibrarySnapshot>): LibrarySnapshot {
+  return {
+    ...snapshot,
+    ...saved,
+    daily: (saved.daily ?? snapshot.daily).map(hydrateTrack),
+    roam: (saved.roam ?? snapshot.roam).map(hydrateTrack),
+    liked: (saved.liked ?? snapshot.liked).map(hydrateTrack),
+    device: (saved.device ?? snapshot.device).map(hydrateTrack),
+  };
+}
+
 export async function hydrateLibrary() {
   try {
     const db = await openDatabase();
@@ -29,13 +56,14 @@ export async function hydrateLibrary() {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-    if (saved) { snapshot = { ...snapshot, ...saved }; return; }
+    if (saved) { snapshot = hydrateSnapshot(saved); return; }
   } catch { /* Migrate the older cache if database access is unavailable. */ }
   try {
     const old = JSON.parse(localStorage.getItem("aria-pools-cache") || "{}");
     for (const key of ["daily", "roam", "liked", "playlists"] as const) {
       if (Array.isArray(old[key])) (snapshot[key] as unknown[]) = old[key];
     }
+    snapshot = hydrateSnapshot(snapshot);
   } catch { /* A malformed legacy cache must not prevent startup. */ }
 }
 
@@ -43,7 +71,12 @@ export function readLibrary() { return snapshot; }
 
 export function compactTrack(track: Track): Track {
   return {
-    ...track, lyrics: [], waveform: [],
+    ...track,
+    // Lyrics/artwork overrides live in their own bounded caches. Keeping
+    // them inside every library entry bloated the IndexedDB snapshot.
+    lyrics: [],
+    waveform: [],
+    coverUrl: track.coverUrl?.startsWith("data:") ? undefined : track.coverUrl,
     // CDN links expire. Device content:// URIs and desktop URLs stay intact.
     streamUrl: track.source === "netease" && track.streamUrl?.startsWith("http") && !track.streamUrl.includes("/api/")
       ? `direct:${track.providerId ?? track.id.replace("netease:", "")}` : track.streamUrl,

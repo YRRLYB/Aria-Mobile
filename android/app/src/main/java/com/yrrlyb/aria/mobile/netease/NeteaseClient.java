@@ -42,6 +42,17 @@ public final class NeteaseClient {
         }
     }
 
+    /**
+     * NetEase's scanner rejects QR URLs without a chainId as an abnormal
+     * environment. The format matches the web QR flow used by the official
+     * page: v1_<deviceId>_web_login_<timestamp>.
+     */
+    public static String loginQrUrl(Context context, String key) {
+        String chainId = "v1_" + NeteaseSession.deviceId(context)
+                + "_web_login_" + System.currentTimeMillis();
+        return "https://music.163.com/login?codekey=" + key + "&chainId=" + chainId;
+    }
+
     public static class QrCheckResult {
         public final int code; // 800 expired, 801 waiting, 802 scanned, 803 confirmed
         public final JSONObject body;
@@ -151,6 +162,7 @@ public final class NeteaseClient {
                 data.put("password", NeteaseCrypto.md5Hex(password == null ? "" : password));
             }
             data.put("remember", "true");
+            data.put("secureCaptcha", "");
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "loginCellphone build failed");
         }
@@ -273,7 +285,13 @@ public final class NeteaseClient {
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "userPlaylists build failed");
         }
-        return NeteaseHttp.cachedRequest(context, "playlists", 10 * 60_000L, "/api/user/playlist", data, "weapi");
+        JSONObject result = NeteaseHttp.cachedRequest(context, "playlists", 10 * 60_000L, "/api/user/playlist", data, "weapi");
+        try {
+            result.put("userId", NeteaseSession.userId(context));
+        } catch (JSONException ignored) {
+            // The caller can still infer ownership from the liked playlist.
+        }
+        return result;
     }
 
     /** Playlist tracks: v6 detail for ids then v3 song detail for the page. */

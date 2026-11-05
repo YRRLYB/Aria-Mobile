@@ -54,7 +54,7 @@ export function readCachedPlayerState(): CachedPlayerState {
 
     const playQueueSnapshots = Array.isArray(parsed.playQueueSnapshots)
       ? parsed.playQueueSnapshots
-          .map((track) => normalizeTrackSnapshot(track))
+          .map((track) => hydrateTrackLyrics(normalizeTrackSnapshot(track)))
           .filter((track): track is Track => Boolean(track))
           .slice(0, maxCachedQueueTracks)
       : [];
@@ -104,8 +104,17 @@ export function createCachedQueueSnapshots(
   tracks: Track[],
   maxItems = maxCachedQueueTracks,
 ) {
-  const uniqueTracks = tracks.filter((track, index) => tracks.findIndex((item) => item.id === track.id) === index);
-  return uniqueTracks.slice(0, Math.max(0, maxItems)).map((track) => ({
+  const seen = new Set<string>();
+  const uniqueTracks: Track[] = [];
+  const limit = Math.max(0, maxItems);
+  if (limit === 0) return [];
+  for (const track of tracks) {
+    if (uniqueTracks.length >= limit) break;
+    if (seen.has(track.id)) continue;
+    seen.add(track.id);
+    uniqueTracks.push(track);
+  }
+  return uniqueTracks.map((track) => ({
     id: track.id,
     providerId: track.providerId,
     title: track.title,
@@ -129,6 +138,7 @@ export function createCachedQueueSnapshots(
     nativeEnd: track.nativeEnd ?? null,
     cdReadQuality: track.cdReadQuality ?? "high",
     requiresNativePlayback: track.requiresNativePlayback === true,
+    offline: track.offline === true,
     likedAt: track.likedAt ?? null,
     currentLevel: track.currentLevel ?? null,
     availableLevels: track.availableLevels ?? [],
@@ -187,6 +197,7 @@ function normalizeTrackSnapshot(value: unknown): Track | undefined {
     nativeEnd: typeof track.nativeEnd === "string" ? track.nativeEnd : null,
     cdReadQuality: track.cdReadQuality === "low" ? "low" : "high",
     requiresNativePlayback: track.requiresNativePlayback === true,
+    offline: track.offline === true,
     likedAt: typeof track.likedAt === "number" ? track.likedAt : null,
     currentLevel: track.currentLevel ?? null,
     availableLevels: Array.isArray(track.availableLevels) ? track.availableLevels : [],

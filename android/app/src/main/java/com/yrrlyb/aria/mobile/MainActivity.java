@@ -2,6 +2,7 @@ package com.yrrlyb.aria.mobile;
 
 import android.os.Bundle;
 import android.graphics.Color;
+import android.webkit.WebView;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
@@ -77,6 +78,51 @@ public class MainActivity extends BridgeActivity {
         } catch (Throwable ignored) {
             // never block resume; the inset listener re-pushes later
         }
+        scheduleBlankWebViewRecovery();
+    }
+
+    private boolean blankRecoveryPending = false;
+
+    /**
+     * Android can kill the WebView renderer while the foreground playback
+     * service keeps running. When the user returns, the activity can then show
+     * an empty white page. Probe the document once after resume and reload if
+     * the React root never became ready (or if the renderer never answers).
+     */
+    private void scheduleBlankWebViewRecovery() {
+        if (blankRecoveryPending) return;
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        final WebView webView = getBridge().getWebView();
+        blankRecoveryPending = true;
+        final boolean[] answered = new boolean[]{false};
+        final Runnable reloadIfSilent = () -> {
+            if (answered[0]) return;
+            answered[0] = true;
+            blankRecoveryPending = false;
+            android.util.Log.w("Aria", "WebView renderer silent after resume; reloading");
+            try { webView.reload(); } catch (Throwable ignored) { }
+        };
+        webView.postDelayed(reloadIfSilent, 3000L);
+        webView.postDelayed(() -> {
+            if (answered[0]) return;
+            try {
+                webView.evaluateJavascript(
+                        "(function(){try{var r=document.getElementById('root');return !!(window.__ariaWebReady===true && r && r.childElementCount>0 && document.body && document.body.innerText.trim().length>0);}catch(e){return false;}})()",
+                        value -> {
+                            if (answered[0]) return;
+                            answered[0] = true;
+                            blankRecoveryPending = false;
+                            if (!"true".equals(value)) {
+                                android.util.Log.w("Aria", "WebView blank after resume; reloading");
+                                try { webView.reload(); } catch (Throwable ignored) { }
+                            }
+                        });
+            } catch (Throwable error) {
+                answered[0] = true;
+                blankRecoveryPending = false;
+                try { webView.reload(); } catch (Throwable ignored) { }
+            }
+        }, 1400L);
     }
 
     private void pushCurrentInsets() {

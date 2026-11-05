@@ -2,12 +2,13 @@ package com.yrrlyb.aria.mobile;
 
 import android.content.Context;
 import android.content.Intent;
-import android.media.AudioDeviceInfo;
-import android.media.AudioFocusRequest;
-import android.media.AudioManager;
 import android.content.IntentFilter;
 import android.content.BroadcastReceiver;
 import android.app.KeyguardManager;
+import android.media.AudioDeviceInfo;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
+import android.media.audiofx.Equalizer;
 import android.provider.Settings;
 import android.content.pm.ServiceInfo;
 import android.net.Uri;
@@ -26,6 +27,12 @@ import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.ForwardingPlayer;
+import androidx.media3.database.StandaloneDatabaseProvider;
+import androidx.media3.datasource.DataSource;
+import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.cache.CacheDataSource;
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor;
+import androidx.media3.datasource.cache.SimpleCache;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.session.MediaSession;
@@ -36,23 +43,43 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 
+import com.yrrlyb.aria.mobile.netease.NeteaseClient;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Foreground playback service: Media3 ExoPlayer + MediaSession.
  *
  * Owns the notification/lock-screen media card and reliable background
- * playback (the WebView cannot keep audio alive once it is killed). The
- * plugin drives it through static entry points; playback events travel back
- * through {@link EventSink} as plain maps so the Capacitor layer stays
- * dependency-free.
+ * playback. The WebView cannot be trusted to stay alive once Android freezes
+ * or kills the activity, so the service also owns the upcoming queue: it
+ * appends the next item ahead of time, resolves direct NetEase URLs on-device
+ * when needed and advances/repeats without waiting for JavaScript.
  */
 public class AriaPlaybackService extends MediaSessionService {
 
     public static final String ACTION_LOAD = "com.yrrlyb.aria.mobile.action.LOAD";
     private static final String CHANNEL_ID = "aria_playback";
     private static final int TEMP_NOTIFICATION_ID = 42;
+
+    // Resolve direct CDN URLs only shortly before they are needed. NetEase
+    // links expire after a few minutes, so resolving the whole queue up front
+    // would leave dead links at the front.
+    private static final long DIRECT_PREPARE_WINDOW_MS = 120_000L;
+    private static final String[] QUALITY_LEVELS = {
+            "standard", "higher", "exhigh", "lossless", "hires", "jymaster",
+    };
 
     public interface EventSink {
         void emit(Map<String, Object> event);
@@ -64,6 +91,11 @@ public class AriaPlaybackService extends MediaSessionService {
 
     private ExoPlayer player;
     private AudioBitrateMeter bitrateMeter = new AudioBitrateMeter();
+    private long lastMeasuredBitrate = 0;
+    private SimpleCache audioCache;
+    private DataSource.Factory cachedDataSourceFactory;
+    private Equalizer equalizer;
+    private int pendingEqualizerPreset = -1;
     private MediaSession session;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     // True while our placeholder notification owns the foreground slot. The
@@ -93,6 +125,81 @@ public class AriaPlaybackService extends MediaSessionService {
             }
         }
     };
+
+    // ---- Native-owned queue (survives WebView suspension) ----
+    private final List<QueueEntry> nativeQueue = new ArrayList<>();
+    private int nativeQueueIndex = -1;
+    private String nativeRepeatMode = "all";
+    private String playbackRequestId = "";
+    private int queueGeneration = 0;
+    private int navigationToken = 0;
+    private int appendToken = 0;
+    private boolean nextAppendBusy = false;
+    private boolean startInFlight = false;
+    private final Set<Integer> failedQueuePositions = new HashSet<>();
+    private final ExecutorService urlExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "aria-playback-url");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private String lastEmittedTrackId = "";
+
+    private static final class QueueEntry {
+        final String trackId;
+        final String url;
+        final String directId;
+        final String level;
+        final String title;
+        final String artist;
+        final String album;
+        final String artworkUrl;
+        String resolvedUrl;
+
+        QueueEntry(String trackId, String url, String directId, String level,
+                   String title, String artist, String album, String artworkUrl) {
+            this.trackId = trackId == null ? "" : trackId;
+            this.url = url == null ? "" : url;
+            this.directId = directId == null ? "" : directId;
+            this.level = level == null || level.isEmpty() ? "exhigh" : level;
+            this.title = title == null ? "" : title;
+            this.artist = artist == null ? "" : artist;
+            this.album = album == null ? "" : album;
+            this.artworkUrl = artworkUrl == null ? "" : artworkUrl;
+            this.resolvedUrl = this.url;
+        }
+
+        static QueueEntry fromBundle(Bundle bundle) {
+            return new QueueEntry(
+                    bundle.getString("trackId", ""),
+                    bundle.getString("url", ""),
+                    bundle.getString("directId", ""),
+                    bundle.getString("level", ""),
+                    bundle.getString("title", ""),
+                    bundle.getString("artist", ""),
+                    bundle.getString("album", ""),
+                    bundle.getString("artworkUrl", ""));
+        }
+
+        static QueueEntry fromLoad(Bundle extras) {
+            return new QueueEntry(
+                    extras.getString("trackId", ""),
+                    extras.getString("url", ""),
+                    extras.getString("directId", ""),
+                    extras.getString("level", ""),
+                    extras.getString("title", ""),
+                    extras.getString("artist", ""),
+                    extras.getString("album", ""),
+                    extras.getString("artworkUrl", ""));
+        }
+
+        boolean hasPlayableUrl() {
+            return resolvedUrl != null && !resolvedUrl.isEmpty();
+        }
+
+        String playableUrl() {
+            return resolvedUrl == null ? "" : resolvedUrl;
+        }
+    }
 
     private void showMusicLockScreen() {
         if (!getSharedPreferences("aria-lock-screen", MODE_PRIVATE).getBoolean("enabled", false)) return;
@@ -125,7 +232,16 @@ public class AriaPlaybackService extends MediaSessionService {
                 event.put("position", safePosition());
                 appendAudioFormat(event);
                 emit(event);
+                maybeAppendNext();
+                if (pendingEqualizerPreset >= 0) {
+                    applyEqualizerPreset(pendingEqualizerPreset);
+                    pendingEqualizerPreset = -1;
+                }
             } else if (playbackState == Player.STATE_ENDED) {
+                // Normally the next item is already appended. If resolution was
+                // still in flight (or the network failed), try the queue once
+                // more before telling the web layer playback stopped.
+                if (playNextFromQueue(false)) return;
                 emit(baseEvent("ended"));
             }
         }
@@ -140,24 +256,55 @@ public class AriaPlaybackService extends MediaSessionService {
             Map<String, Object> event = baseEvent("state");
             event.put("playing", playWhenReady);
             emit(event);
+            if (playWhenReady) maybeAppendNext();
         }
 
         @Override
         public void onMediaItemTransition(MediaItem mediaItem, int reason) {
-            if (mediaItem == null || reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) return;
-            // AUTO = gapless advance to the item appended via loadNext();
-            // the JS layer adopts the new track id so queue UI follows.
+            if (mediaItem == null) return;
+            if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
+                    && reason != Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) return;
+
+            int queuePosition = queuePositionOf(mediaItem);
+            int previousPosition = nativeQueueIndex;
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                bitrateMeter.reset();
+                lastMeasuredBitrate = 0;
+            }
+            if (queuePosition >= 0) nativeQueueIndex = queuePosition;
+            else {
+                int found = indexOfTrack(trackIdOf(mediaItem));
+                if (found >= 0) nativeQueueIndex = found;
+            }
+            // A direct CDN URL is short-lived. Once its item has been played,
+            // drop the cached link so a repeat-all pass resolves a fresh one.
+            if (previousPosition >= 0 && previousPosition < nativeQueue.size()) {
+                QueueEntry played = nativeQueue.get(previousPosition);
+                if (played.url.isEmpty() && !played.directId.isEmpty()) played.resolvedUrl = "";
+            }
+            nextAppendBusy = false;
+            maybeAppendNext();
+
+            String trackId = trackIdOf(mediaItem);
+            if (trackId.isEmpty() || trackId.equals(lastEmittedTrackId)) return;
+            lastEmittedTrackId = trackId;
             Map<String, Object> event = baseEvent("advanced");
-            event.put("trackId", trackIdOf(mediaItem));
             event.put("duration", safeDuration());
+            event.put("position", safePosition());
             emit(event);
         }
 
         @Override
         public void onPlayerError(PlaybackException error) {
+            String message = error != null ? String.valueOf(error.getMessage()) : "unknown playback error";
+            android.util.Log.w("AriaPlayback", "player error: " + message);
+            if (nativeQueueIndex >= 0) failedQueuePositions.add(nativeQueueIndex);
+            // Expired CDN links are common in direct mode. Skip to the next
+            // playable queue item instead of stranding a background session.
+            if (playNextFromQueue(true)) return;
             releaseTempForeground();
             Map<String, Object> event = baseEvent("error");
-            event.put("message", error != null ? String.valueOf(error.getMessage()) : "unknown playback error");
+            event.put("message", message);
             emit(event);
         }
     };
@@ -166,14 +313,23 @@ public class AriaPlaybackService extends MediaSessionService {
         @Override
         public void run() {
             ExoPlayer activePlayer = player;
-            if (activePlayer != null) {
-                Map<String, Object> event = baseEvent("progress");
-                event.put("position", safePosition());
-                event.put("duration", safeDuration());
-                if (activePlayer.getPlaybackState() == Player.STATE_READY) appendAudioFormat(event);
-                emit(event);
-                mainHandler.postDelayed(this, 500);
-            }
+            if (activePlayer == null) return;
+            // This runs from the service, so gapless preparation continues
+            // even when the WebView has been frozen in the background.
+            maybeAppendNext();
+            Map<String, Object> event = baseEvent("progress");
+            event.put("position", safePosition());
+            event.put("duration", safeDuration());
+            if (activePlayer.getPlaybackState() == Player.STATE_READY) appendAudioFormat(event);
+            emit(event);
+            mainHandler.postDelayed(this, 500);
+        }
+    };
+
+    private final Runnable sleepTimerRunnable = () -> {
+        ExoPlayer activePlayer = player;
+        if (activePlayer != null) {
+            activePlayer.setPlayWhenReady(false);
         }
     };
 
@@ -185,6 +341,21 @@ public class AriaPlaybackService extends MediaSessionService {
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                 .build();
+        try {
+            File cacheDir = new File(getCacheDir(), "audio-cache");
+            audioCache = new SimpleCache(
+                    cacheDir,
+                    new LeastRecentlyUsedCacheEvictor(128L * 1024 * 1024),
+                    new StandaloneDatabaseProvider(this));
+            cachedDataSourceFactory = new CacheDataSource.Factory()
+                    .setCache(audioCache)
+                    .setUpstreamDataSourceFactory(new DefaultDataSource.Factory(this))
+                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+        } catch (Throwable error) {
+            android.util.Log.w("AriaPlayback", "audio cache unavailable", error);
+            audioCache = null;
+            cachedDataSourceFactory = new DefaultDataSource.Factory(this);
+        }
         player = new ExoPlayer.Builder(this)
                 .setAudioAttributes(audioAttributes, true)
                 .setHandleAudioBecomingNoisy(true)
@@ -235,7 +406,13 @@ public class AriaPlaybackService extends MediaSessionService {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_LOAD.equals(intent.getAction()) && intent.getExtras() != null) {
+        if (intent == null) {
+            // Recreated by START_STICKY without a payload: there is no queue
+            // to restore, so release the empty service instead of lingering.
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (ACTION_LOAD.equals(intent.getAction()) && intent.getExtras() != null) {
             // Promote to foreground right away: rapid LOAD intents must never
             // depend on the stream actually starting within the system's
             // foreground-service grace period (miss it and the process is
@@ -243,7 +420,10 @@ public class AriaPlaybackService extends MediaSessionService {
             ensureTempForeground();
             applyLoad(intent.getExtras());
         }
-        return super.onStartCommand(intent, flags, startId);
+        super.onStartCommand(intent, flags, startId);
+        // If an OEM still kills the process, let Android recreate the service
+        // instead of leaving the app without a playback component.
+        return START_STICKY;
     }
 
     private void createNotificationChannel() {
@@ -281,12 +461,15 @@ public class AriaPlaybackService extends MediaSessionService {
 
     @Override
     public void onDestroy() {
+        queueGeneration++;
         unregisterReceiver(screenReceiver);
         LockPlayerActivity.dismiss();
         mainHandler.removeCallbacks(progressRunnable);
+        mainHandler.removeCallbacks(sleepTimerRunnable);
         applyUsbExclusive(false);
         instance = null;
         releaseTempForeground();
+        urlExecutor.shutdownNow();
         if (session != null) {
             session.release();
             session = null;
@@ -295,15 +478,25 @@ public class AriaPlaybackService extends MediaSessionService {
             player.release();
             player = null;
         }
+        if (equalizer != null) {
+            try { equalizer.release(); } catch (Throwable ignored) { }
+            equalizer = null;
+        }
+        if (audioCache != null) {
+            try { audioCache.release(); } catch (Throwable ignored) { }
+            audioCache = null;
+            cachedDataSourceFactory = null;
+        }
         super.onDestroy();
     }
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         ExoPlayer activePlayer = player;
-        // isPlaying() is false while a network item is buffering. Stopping the
-        // service at that moment is why background playback often survived one
-        // song and then became silent.
+        // Do not tear down a live/ready session when the user swipes the app
+        // away: the foreground service and its notification are the only
+        // reason music keeps playing in the background. A service that was
+        // already paused can be released.
         if (activePlayer == null || activePlayer.getCurrentMediaItem() == null
                 || !activePlayer.getPlayWhenReady()) {
             stopSelf();
@@ -338,7 +531,7 @@ public class AriaPlaybackService extends MediaSessionService {
 
     static void requestSkip(boolean next) {
         AriaPlaybackService service = instance;
-        if (service != null) service.runOnMain(() -> service.emit(service.baseEvent(next ? "next" : "previous")));
+        if (service != null) service.runOnMain(() -> service.skipNative(next));
     }
 
     static void requestLike() {
@@ -346,24 +539,168 @@ public class AriaPlaybackService extends MediaSessionService {
         if (service != null) service.runOnMain(() -> service.emit(service.baseEvent("like")));
     }
 
+    /** minutes <= 0 clears the timer. Executes in the service so it keeps
+     *  working while the WebView is suspended. */
+    static void setSleepTimer(int minutes) {
+        AriaPlaybackService service = instance;
+        if (service == null) return;
+        service.runOnMain(() -> {
+            service.mainHandler.removeCallbacks(service.sleepTimerRunnable);
+            if (minutes > 0) {
+                service.mainHandler.postDelayed(service.sleepTimerRunnable, minutes * 60_000L);
+            }
+        });
+    }
+
+    static void setPlaybackSpeed(float speed) {
+        ExoPlayer activePlayer = instance != null ? instance.player : null;
+        if (activePlayer != null) {
+            activePlayer.setPlaybackSpeed((float) clampSpeed(speed));
+        }
+    }
+
+    static Map<String, Object> getEqualizerSettings() {
+        Map<String, Object> result = new HashMap<>();
+        AriaPlaybackService service = instance;
+        if (service == null || service.player == null) {
+            result.put("supported", false);
+            result.put("enabled", false);
+            result.put("current", -1);
+            result.put("presets", new java.util.ArrayList<String>());
+            return result;
+        }
+        service.ensureEqualizer();
+        Equalizer eq = service.equalizer;
+        if (eq == null) {
+            result.put("supported", false);
+            result.put("enabled", false);
+            result.put("current", -1);
+            result.put("presets", new java.util.ArrayList<String>());
+            return result;
+        }
+        try {
+            java.util.ArrayList<String> presets = new java.util.ArrayList<>();
+            short count = eq.getNumberOfPresets();
+            for (short index = 0; index < count; index++) {
+                presets.add(eq.getPresetName(index));
+            }
+            result.put("supported", true);
+            result.put("enabled", eq.getEnabled());
+            result.put("current", (int) eq.getCurrentPreset());
+            result.put("presets", presets);
+        } catch (Throwable error) {
+            result.put("supported", false);
+            result.put("enabled", false);
+            result.put("current", -1);
+            result.put("presets", new java.util.ArrayList<String>());
+        }
+        return result;
+    }
+
+    static void setEqualizerPreset(int preset) {
+        AriaPlaybackService service = instance;
+        if (service == null) return;
+        service.runOnMain(() -> {
+            service.pendingEqualizerPreset = preset;
+            service.applyEqualizerPreset(preset);
+        });
+    }
+
+    static void stopPlayback() {
+        AriaPlaybackService service = instance;
+        if (service == null) return;
+        service.runOnMain(() -> {
+            service.queueGeneration++;
+            service.navigationToken++;
+            service.appendToken++;
+            service.mainHandler.removeCallbacks(service.sleepTimerRunnable);
+            service.nativeQueue.clear();
+            service.nativeQueueIndex = -1;
+            service.nextAppendBusy = false;
+            service.startInFlight = false;
+            if (service.player != null) {
+                service.player.stop();
+                service.player.clearMediaItems();
+            }
+            service.releaseTempForeground();
+            service.stopSelf();
+        });
+    }
+
     // ---- Payload application ----
 
+    @SuppressWarnings("deprecation")
     private void applyLoad(Bundle extras) {
         runOnMain(() -> {
+            if (player == null) return;
+            int generation = ++queueGeneration;
+            navigationToken++;
+            appendToken++;
             android.util.Log.i("AriaPlayback", "applyLoad trackId=" + extras.getString("trackId", "")
                     + " requestId=" + extras.getString("requestId", "")
                     + " paused=" + extras.getBoolean("paused", false));
-            MediaItem item = buildItem(extras);
+            playbackRequestId = extras.getString("requestId", "");
+            nativeRepeatMode = "one".equals(extras.getString("repeatMode", "all")) ? "one" : "all";
+            nativeQueue.clear();
+            failedQueuePositions.clear();
+            nextAppendBusy = false;
+            startInFlight = false;
+
+            ArrayList<Bundle> queueBundles = Build.VERSION.SDK_INT >= 33
+                    ? extras.getParcelableArrayList("queue", Bundle.class)
+                    : extras.getParcelableArrayList("queue");
+            if (queueBundles != null) {
+                for (Bundle bundle : queueBundles) {
+                    if (bundle == null) continue;
+                    QueueEntry entry = QueueEntry.fromBundle(bundle);
+                    if (!entry.trackId.isEmpty()) nativeQueue.add(entry);
+                }
+            }
+
+            String trackId = extras.getString("trackId", "");
+            int currentIndex = indexOfTrack(trackId);
+            if (currentIndex < 0) {
+                nativeQueue.add(0, QueueEntry.fromLoad(extras));
+                currentIndex = 0;
+            }
+            nativeQueueIndex = currentIndex;
+            lastEmittedTrackId = trackId;
+
+            MediaItem item = buildCurrentItem(extras, currentIndex);
             double position = extras.getDouble("position", 0.0);
             long startPosition = position > 0.1 ? (long) (position * 1000) : C.TIME_UNSET;
             bitrateMeter = new AudioBitrateMeter();
+            lastMeasuredBitrate = 0;
+            DataSource.Factory dataSourceFactory = cachedDataSourceFactory != null
+                    ? cachedDataSourceFactory
+                    : new DefaultDataSource.Factory(this);
             androidx.media3.exoplayer.source.DefaultMediaSourceFactory sourceFactory =
-                    new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this, new MeasuredExtractorsFactory(bitrateMeter));
+                    new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                            dataSourceFactory,
+                            new MeasuredExtractorsFactory(bitrateMeter));
+            player.setRepeatMode(repeatModeForNative());
             player.setMediaSource(sourceFactory.createMediaSource(item), startPosition);
             player.setVolume((float) clampVolume(extras.getDouble("volume", 1.0)));
+            player.setPlaybackSpeed((float) clampSpeed(extras.getDouble("speed", 1.0)));
+            pendingEqualizerPreset = extras.getInt("equalizerPreset", -1);
             player.prepare();
             player.setPlayWhenReady(!extras.getBoolean("paused", false));
             restartProgressLoop();
+            if (generation == queueGeneration) maybeAppendNext();
+        });
+    }
+
+    private int repeatModeForNative() {
+        return "one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF;
+    }
+
+    static void setRepeatMode(String repeatMode) {
+        AriaPlaybackService service = instance;
+        if (service == null) return;
+        service.runOnMain(() -> {
+            service.nativeRepeatMode = "one".equals(repeatMode) ? "one" : "all";
+            if (service.player != null) service.player.setRepeatMode(service.repeatModeForNative());
+            if (!"one".equals(service.nativeRepeatMode)) service.maybeAppendNext();
         });
     }
 
@@ -371,8 +708,10 @@ public class AriaPlaybackService extends MediaSessionService {
         AriaPlaybackService service = instance;
         if (service == null) return;
         service.runOnMain(() -> {
-            if (service.player == null) return;
-            service.player.addMediaItem(service.buildItem(extras));
+            if (service.player == null || service.player.hasNextMediaItem()) return;
+            QueueEntry entry = QueueEntry.fromBundle(extras);
+            if (!entry.hasPlayableUrl()) return;
+            service.player.addMediaItem(service.buildQueueItem(entry, -1));
         });
     }
 
@@ -404,34 +743,275 @@ public class AriaPlaybackService extends MediaSessionService {
         return result;
     }
 
-    private MediaItem buildItem(Bundle extras) {
-        String trackId = extras.getString("trackId", "");
+    // ---- Native queue helpers ----
+
+    private MediaItem buildCurrentItem(Bundle extras, int queuePosition) {
+        QueueEntry entry = QueueEntry.fromLoad(extras);
+        // The top-level load always carries the already-resolved URL; the
+        // queue copy is only used for later transitions.
+        entry.resolvedUrl = extras.getString("url", "");
+        return buildQueueItem(entry, queuePosition);
+    }
+
+    private MediaItem buildQueueItem(QueueEntry entry, int queuePosition) {
         Bundle itemExtras = new Bundle();
-        itemExtras.putString("trackId", trackId);
-        itemExtras.putString("requestId", extras.getString("requestId", ""));
+        itemExtras.putString("trackId", entry.trackId);
+        itemExtras.putString("requestId", playbackRequestId);
+        itemExtras.putInt("queuePos", queuePosition);
 
         MediaMetadata.Builder metadata = new MediaMetadata.Builder()
-                .setTitle(extras.getString("title", ""))
-                .setArtist(extras.getString("artist", ""))
-                .setAlbumTitle(extras.getString("album", ""))
+                .setTitle(entry.title)
+                .setArtist(entry.artist)
+                .setAlbumTitle(entry.album)
                 .setExtras(itemExtras);
-        String artworkUrl = extras.getString("artworkUrl", "");
-        if (artworkUrl != null && !artworkUrl.isEmpty()) {
-            metadata.setArtworkUri(Uri.parse(artworkUrl));
-            LockPlayerActivity.prepareArtwork(this, artworkUrl);
+        if (!entry.artworkUrl.isEmpty()) {
+            metadata.setArtworkUri(Uri.parse(entry.artworkUrl));
+            LockPlayerActivity.prepareArtwork(this, entry.artworkUrl);
         }
 
         return new MediaItem.Builder()
-                .setMediaId(trackId)
-                .setUri(extras.getString("url", ""))
+                .setMediaId(entry.trackId)
+                .setUri(entry.playableUrl())
                 .setMediaMetadata(metadata.build())
                 .build();
+    }
+
+    private int indexOfTrack(String trackId) {
+        if (trackId == null || trackId.isEmpty()) return -1;
+        for (int index = 0; index < nativeQueue.size(); index++) {
+            if (trackId.equals(nativeQueue.get(index).trackId)) return index;
+        }
+        return -1;
+    }
+
+    private int nextQueuePosition(int from, boolean wrap) {
+        if (nativeQueue.isEmpty()) return -1;
+        if (from < 0) return 0;
+        if (from + 1 < nativeQueue.size()) return from + 1;
+        return wrap ? 0 : -1;
+    }
+
+    private int previousQueuePosition(int from) {
+        if (nativeQueue.isEmpty()) return -1;
+        if (from <= 0) return nativeQueue.size() - 1;
+        return from - 1;
+    }
+
+    private void maybeAppendNext() {
+        ExoPlayer activePlayer = player;
+        if (activePlayer == null || nativeQueue.isEmpty()) return;
+        if ("one".equals(nativeRepeatMode)) return;
+        if (activePlayer.hasNextMediaItem() || nextAppendBusy || startInFlight) return;
+        int position = nextQueuePosition(nativeQueueIndex, true);
+        if (position >= 0) maybeAppendAt(position, 0);
+    }
+
+    private void maybeAppendAt(int position, int attempts) {
+        ExoPlayer activePlayer = player;
+        if (activePlayer == null || nativeQueue.isEmpty()) return;
+        if (attempts > nativeQueue.size()) return;
+        if (position < 0 || position >= nativeQueue.size()) return;
+        if (failedQueuePositions.contains(position)) {
+            maybeAppendAt(nextQueuePosition(position, true), attempts + 1);
+            return;
+        }
+        QueueEntry entry = nativeQueue.get(position);
+        if (entry.hasPlayableUrl()) {
+            activePlayer.addMediaItem(buildQueueItem(entry, position));
+            return;
+        }
+        // Do not burn a short-lived CDN link while the user has deliberately
+        // paused near the end of a track.
+        if (!activePlayer.getPlayWhenReady()) return;
+        long remaining = remainingMs();
+        // Keep direct links fresh: wait until the current song is near its end
+        // before asking songUrlV1 for the next CDN url.
+        if (remaining > DIRECT_PREPARE_WINDOW_MS) return;
+        resolveAndAppend(entry, position, attempts);
+    }
+
+    private void resolveAndAppend(QueueEntry entry, int position, int attempts) {
+        nextAppendBusy = true;
+        int generation = queueGeneration;
+        int token = ++appendToken;
+        urlExecutor.execute(() -> {
+            String url = resolveEntryUrl(entry);
+            mainHandler.post(() -> {
+                if (generation != queueGeneration || token != appendToken) return;
+                nextAppendBusy = false;
+                ExoPlayer activePlayer = player;
+                if (activePlayer == null) return;
+                if (url.isEmpty()) {
+                    failedQueuePositions.add(position);
+                    android.util.Log.w("AriaPlayback", "unable to resolve next track " + entry.trackId);
+                    maybeAppendAt(nextQueuePosition(position, true), attempts + 1);
+                    return;
+                }
+                entry.resolvedUrl = url;
+                // A manual skip may have moved the queue while the request was
+                // in flight; never append an item for an obsolete position.
+                if (nativeQueueIndex < 0 || position != nextQueuePosition(nativeQueueIndex, true)) return;
+                if (!activePlayer.hasNextMediaItem()) {
+                    activePlayer.addMediaItem(buildQueueItem(entry, position));
+                }
+            });
+        });
+    }
+
+    private long remainingMs() {
+        ExoPlayer activePlayer = player;
+        if (activePlayer == null) return 0;
+        long duration = activePlayer.getDuration();
+        if (duration == C.TIME_UNSET || duration <= 0) return 0;
+        return Math.max(0, duration - activePlayer.getCurrentPosition());
+    }
+
+    private String resolveEntryUrl(QueueEntry entry) {
+        if (entry.hasPlayableUrl()) return entry.playableUrl();
+        long songId = parseSongId(entry.directId);
+        if (songId <= 0) return "";
+        int start = 2;
+        for (int index = 0; index < QUALITY_LEVELS.length; index++) {
+            if (QUALITY_LEVELS[index].equals(entry.level)) {
+                start = index;
+                break;
+            }
+        }
+        for (int index = start; index >= 0; index--) {
+            try {
+                JSONObject body = NeteaseClient.songUrlV1(getApplicationContext(), songId, QUALITY_LEVELS[index]);
+                JSONArray data = body.optJSONArray("data");
+                JSONObject first = data != null ? data.optJSONObject(0) : null;
+                String url = first != null ? first.optString("url", "") : "";
+                if (!url.isEmpty()) return url;
+            } catch (Throwable error) {
+                android.util.Log.w("AriaPlayback", "songUrlV1 failed: " + songId + " " + QUALITY_LEVELS[index], error);
+            }
+        }
+        return "";
+    }
+
+    private static long parseSongId(String value) {
+        if (value == null) return 0;
+        String digits = value.replaceAll("[^0-9]", "");
+        if (digits.isEmpty()) return 0;
+        try {
+            return Long.parseLong(digits);
+        } catch (NumberFormatException error) {
+            return 0;
+        }
+    }
+
+    private void skipNative(boolean next) {
+        ExoPlayer activePlayer = player;
+        if (activePlayer == null) return;
+        navigationToken++;
+        appendToken++;
+        startInFlight = false;
+        nextAppendBusy = false;
+        if (!next) {
+            if (activePlayer.getCurrentPosition() > 3000) {
+                activePlayer.seekTo(0);
+                return;
+            }
+            int previous = previousQueuePosition(nativeQueueIndex);
+            if (previous >= 0) startQueuePosition(previous, 0, true, 0);
+            return;
+        }
+        // Use Media3's pre-appended item when available: it is already
+        // buffered and transitions gaplessly.
+        if (activePlayer.hasNextMediaItem()) {
+            activePlayer.seekToNextMediaItem();
+            activePlayer.play();
+            return;
+        }
+        startQueuePosition(nextQueuePosition(nativeQueueIndex, true), 0, true, 0);
+    }
+
+    private boolean playNextFromQueue(boolean manual) {
+        if (nativeQueue.isEmpty()) return false;
+        int position;
+        if ("one".equals(nativeRepeatMode) && !manual) {
+            position = nativeQueueIndex;
+        } else {
+            position = nextQueuePosition(nativeQueueIndex, true);
+        }
+        return startQueuePosition(position, 0, true, 0);
+    }
+
+    private boolean startQueuePosition(int position, long startMs, boolean emitAdvance, int attempts) {
+        if (position < 0 || position >= nativeQueue.size()) return false;
+        if (attempts > nativeQueue.size()) return false;
+        if (failedQueuePositions.contains(position)) {
+            return startQueuePosition(nextQueuePosition(position, true), startMs, emitAdvance, attempts + 1);
+        }
+        QueueEntry entry = nativeQueue.get(position);
+        if (entry.hasPlayableUrl()) {
+            startEntry(entry, position, startMs, emitAdvance);
+            return true;
+        }
+        // Resolve before handing the item to ExoPlayer. The UI (if alive) will
+        // receive the advanced event once playback actually starts.
+        int generation = queueGeneration;
+        int token = ++navigationToken;
+        startInFlight = true;
+        urlExecutor.execute(() -> {
+            String url = resolveEntryUrl(entry);
+            mainHandler.post(() -> {
+                if (generation != queueGeneration || token != navigationToken) return;
+                startInFlight = false;
+                if (url.isEmpty()) {
+                    failedQueuePositions.add(position);
+                    if (!startQueuePosition(nextQueuePosition(position, true), startMs, emitAdvance, attempts + 1)) {
+                        emit(baseEvent("error"));
+                    }
+                    return;
+                }
+                entry.resolvedUrl = url;
+                startEntry(entry, position, startMs, emitAdvance);
+            });
+        });
+        return true;
+    }
+
+    private void startEntry(QueueEntry entry, int position, long startMs, boolean emitAdvance) {
+        ExoPlayer activePlayer = player;
+        if (activePlayer == null) return;
+        navigationToken++;
+        appendToken++;
+        startInFlight = false;
+        nextAppendBusy = false;
+        int previousIndex = nativeQueueIndex;
+        if (previousIndex >= 0 && previousIndex < nativeQueue.size() && previousIndex != position) {
+            QueueEntry previous = nativeQueue.get(previousIndex);
+            if (previous.url.isEmpty() && !previous.directId.isEmpty()) previous.resolvedUrl = "";
+        }
+        nativeQueueIndex = position;
+        bitrateMeter.reset();
+        lastMeasuredBitrate = 0;
+        MediaItem item = buildQueueItem(entry, position);
+        boolean wasSameTrack = entry.trackId.equals(lastEmittedTrackId);
+        activePlayer.setRepeatMode(repeatModeForNative());
+        activePlayer.setMediaItem(item, startMs > 0 ? startMs : C.TIME_UNSET);
+        activePlayer.prepare();
+        activePlayer.setPlayWhenReady(true);
+        restartProgressLoop();
+        lastEmittedTrackId = entry.trackId;
+        if (emitAdvance && !wasSameTrack) {
+            Map<String, Object> event = baseEvent("advanced");
+            event.put("duration", 0.0);
+            event.put("position", startMs / 1000.0);
+            emit(event);
+        }
+        maybeAppendNext();
     }
 
     private void restartProgressLoop() {
         mainHandler.removeCallbacks(progressRunnable);
         mainHandler.postDelayed(progressRunnable, 500);
     }
+
+    // ---- USB / helpers ----
 
     private boolean hasUsbOutput() {
         return hasUsbOutput(this);
@@ -475,8 +1055,6 @@ public class AriaPlaybackService extends MediaSessionService {
                 == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
     }
 
-    // ---- Helpers ----
-
     private void runOnMain(Runnable runnable) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             runnable.run();
@@ -490,12 +1068,20 @@ public class AriaPlaybackService extends MediaSessionService {
     }
 
     private void appendAudioFormat(Map<String, Object> event) {
+        if (player == null) return;
         androidx.media3.common.Format format = player.getAudioFormat();
         if (format == null) return;
         // Source encoding parameters, not the resampled PCM output or download speed.
         if (format.sampleMimeType != null) event.put("audioFormat", format.sampleMimeType);
         long measuredBitrate = bitrateMeter.bitrateAt(player.getCurrentPosition());
-        if (measuredBitrate > 0) event.put("bitrate", (double) measuredBitrate);
+        if (measuredBitrate > 0) {
+            lastMeasuredBitrate = measuredBitrate;
+        } else if (lastMeasuredBitrate <= 0 && format.bitrate > 0) {
+            // Container metadata is a useful fallback until enough frames have
+            // been parsed (and after the WebView resumes from the background).
+            lastMeasuredBitrate = format.bitrate;
+        }
+        if (lastMeasuredBitrate > 0) event.put("bitrate", (double) lastMeasuredBitrate);
         if (format.sampleRate > 0) event.put("sampleRate", (double) format.sampleRate);
     }
 
@@ -519,22 +1105,68 @@ public class AriaPlaybackService extends MediaSessionService {
         return extras != null ? extras.getString("trackId", "") : "";
     }
 
+    private static int queuePositionOf(MediaItem item) {
+        MediaMetadata metadata = item.mediaMetadata;
+        Bundle extras = metadata != null ? metadata.extras : null;
+        return extras != null ? extras.getInt("queuePos", -1) : -1;
+    }
+
     private static double clampVolume(double volume) {
         return Math.max(0.0, Math.min(1.0, volume));
     }
 
-    private Map<String, Object> baseEvent(String kind) {
-        AriaPlaybackService service = instance;
-        String currentTrackId = "";
-        if (service != null && service.player != null && service.player.getCurrentMediaItem() != null) {
-            currentTrackId = trackIdOf(service.player.getCurrentMediaItem());
+    private static double clampSpeed(double speed) {
+        return Math.max(0.5, Math.min(3.0, speed));
+    }
+
+    private void ensureEqualizer() {
+        if (equalizer != null || player == null) return;
+        try {
+            int sessionId = player.getAudioSessionId();
+            if (sessionId == 0) return;
+            equalizer = new Equalizer(0, sessionId);
+            equalizer.setEnabled(true);
+        } catch (Throwable error) {
+            equalizer = null;
+            android.util.Log.w("AriaEqualizer", "unavailable", error);
         }
+    }
+
+    private void applyEqualizerPreset(int preset) {
+        ensureEqualizer();
+        if (equalizer == null) return;
+        try {
+            if (preset < 0) {
+                equalizer.setEnabled(false);
+                return;
+            }
+            short count = equalizer.getNumberOfPresets();
+            if (preset >= count) return;
+            equalizer.setEnabled(true);
+            equalizer.usePreset((short) preset);
+        } catch (Throwable error) {
+            android.util.Log.w("AriaEqualizer", "preset failed: " + preset, error);
+        }
+    }
+
+    private Map<String, Object> baseEvent(String kind) {
         Map<String, Object> event = new HashMap<>();
         event.put("kind", kind);
-        event.put("trackId", currentTrackId);
+        String trackId = "";
+        String requestId = "";
+        int queuePosition = -1;
         MediaItem item = player != null ? player.getCurrentMediaItem() : null;
-        Bundle itemExtras = item != null ? item.mediaMetadata.extras : null;
-        event.put("requestId", itemExtras != null ? itemExtras.getString("requestId", "") : "");
+        if (item != null) {
+            trackId = trackIdOf(item);
+            Bundle itemExtras = item.mediaMetadata != null ? item.mediaMetadata.extras : null;
+            if (itemExtras != null) {
+                requestId = itemExtras.getString("requestId", "");
+                queuePosition = itemExtras.getInt("queuePos", -1);
+            }
+        }
+        event.put("trackId", trackId);
+        event.put("requestId", requestId);
+        event.put("queuePosition", queuePosition);
         return event;
     }
 

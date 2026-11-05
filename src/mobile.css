@@ -1,5 +1,10 @@
 /* Mobile shell styles layered on top of the shared Aria visual language. */
 
+:root {
+  --aria-dot: currentColor;
+  --aria-glint: #ffffff;
+}
+
 html,
 body {
   min-width: 0;

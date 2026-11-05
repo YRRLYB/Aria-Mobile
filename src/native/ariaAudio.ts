@@ -13,6 +13,17 @@ export type AriaAudioEvent = {
   sampleRate?: number;
 };
 
+export type AriaNativeQueueItem = {
+  trackId: string;
+  url?: string;
+  directId?: string;
+  level?: string;
+  title: string;
+  artist: string;
+  album: string;
+  artworkUrl?: string;
+};
+
 export type AriaAudioLoadPayload = {
   requestId: string;
   url: string;
@@ -24,12 +35,25 @@ export type AriaAudioLoadPayload = {
   position?: number;
   paused?: boolean;
   volume?: number;
+  repeatMode?: "all" | "one";
+  speed?: number;
+  equalizerPreset?: number;
+  // The native service keeps this list so it can resolve and play the next
+  // track even while the WebView is suspended in the background.
+  queue?: AriaNativeQueueItem[];
 };
 
 export type UsbExclusiveSettings = {
   enabled: boolean;
   connected: boolean;
   supported: boolean;
+};
+
+export type EqualizerSettings = {
+  supported: boolean;
+  enabled: boolean;
+  current: number;
+  presets: string[];
 };
 
 export type AriaAudioPluginInterface = {
@@ -46,8 +70,14 @@ export type AriaAudioPluginInterface = {
   setPaused(options: { paused: boolean }): Promise<void>;
   seek(options: { position: number }): Promise<void>;
   setVolume(options: { volume: number }): Promise<void>;
+  setRepeatMode(options: { repeatMode: "all" | "one" }): Promise<void>;
+  skip(options: { direction: "next" | "previous" }): Promise<void>;
+  setSleepTimer(options: { minutes: number }): Promise<void>;
+  setPlaybackSpeed(options: { speed: number }): Promise<void>;
+  getEqualizerSettings(): Promise<EqualizerSettings>;
+  setEqualizerPreset(options: { preset: number }): Promise<void>;
   stop(): Promise<void>;
-  getState(): Promise<{ active: boolean; position: number; duration: number; paused: boolean; trackId: string | null }>;
+  getState(): Promise<{ active: boolean; position: number; duration: number; paused: boolean; trackId: string | null; requestId?: string | null }>;
   requestNotifications(): Promise<{ granted?: boolean }>;
   getUsbExclusiveSettings(): Promise<UsbExclusiveSettings>;
   setUsbExclusiveEnabled(options: { enabled: boolean }): Promise<UsbExclusiveSettings>;

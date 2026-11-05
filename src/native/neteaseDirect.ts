@@ -1,6 +1,6 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import QRCode from "qrcode";
-import type { LyricLine } from "@/data/music";
+import { parseLrc, parseYrc, withTranslations } from "../lyrics";
 import {
   registerNeteaseDirectProvider,
   type NeteaseAccountSummary,
@@ -101,29 +101,6 @@ async function invoke<T>(endpoint: string, data?: Record<string, unknown>): Prom
   const result = await NeteaseDirectPlugin.invoke({ endpoint, data: data ? JSON.stringify(data) : "{}" });
   if (!result.ok) throw new Error(result.message || `netease ${endpoint} failed (${result.code ?? "?"})`);
   return (result.data ?? {}) as T;
-}
-
-function parseLrc(source: string | undefined): LyricLine[] {
-  if (!source) return [];
-  const lines: LyricLine[] = [];
-  for (const raw of source.split("\n")) {
-    const match = raw.match(/^\s*\[(\d{2}):(\d{2})(?:\.(\d{1,3}))?\](.*)$/);
-    if (!match) continue;
-    const text = match[4].trim();
-    if (!text) continue;
-    lines.push({ time: `${match[1]}:${match[2]}`, text });
-  }
-  return lines;
-}
-
-function withTranslations(lrc: LyricLine[], translationSource: string | undefined): LyricLine[] {
-  const translations = parseLrc(translationSource);
-  if (!translations.length) return lrc;
-  const byTime = new Map(translations.map((line) => [line.time, line.text]));
-  return lrc.map((line) => {
-    const translation = byTime.get(line.time);
-    return translation ? { ...line, translation } : line;
-  });
 }
 
 function today(): string {
@@ -343,21 +320,35 @@ const directProvider = {
     return { date: today(), tracks: [...songs.values()].slice(0, limit).map(mapSong), reason: "私人漫游" };
   },
   playlists: async () => {
-    const body = await invoke<{ playlist?: Array<{ id: number; name: string; coverImgUrl?: string; trackCount?: number; userId?: number }> }>(
-      "userPlaylists",
-    );
-    const userId = body.playlist?.[0]?.userId;
+    const body = await invoke<{
+      userId?: number;
+      playlist?: Array<{
+        id: number;
+        name: string;
+        coverImgUrl?: string;
+        trackCount?: number;
+        userId?: number;
+        subscribed?: boolean;
+        specialType?: number;
+        creator?: { userId?: number; nickname?: string };
+      }>;
+    }>("userPlaylists");
+    const selfId = body.userId ?? body.playlist?.find((playlist) => playlist.specialType === 5)?.userId ?? 0;
     return {
-      playlists: (body.playlist ?? [])
-        .filter((playlist) => playlist.userId === userId)
-        .map((playlist) => ({
+      playlists: (body.playlist ?? []).map((playlist) => {
+        const ownerId = playlist.creator?.userId ?? playlist.userId;
+        const owned = selfId ? ownerId === selfId : !playlist.subscribed;
+        return {
           id: String(playlist.id),
           name: playlist.name,
           trackCount: playlist.trackCount ?? 0,
-          subscribed: false,
+          subscribed: Boolean(playlist.subscribed ?? !owned),
+          owned,
+          creatorName: playlist.creator?.nickname ?? null,
           coverColor: "#c9d3f2",
           coverUrl: playlist.coverImgUrl ?? null,
-        })),
+        };
+      }),
     };
   },
   playlistTracks: async (playlistId: string) => {
@@ -369,7 +360,7 @@ const directProvider = {
     return (body.result?.songs ?? []).map((song) => mapSong(song));
   },
   searchArtists: async (keyword: string, limit: number) => {
-    const body = await invoke<{ result?: { artists?: Array<{ id: number; name: string; picUrl?: string; albumSize?: number; img1v1Url?: string }> } }>(
+    const body = await invoke<{ result?: { artists?: Array<{ id: number; name: string; picUrl?: string; albumSize?: number; musicSize?: number; img1v1Url?: string }> } }>(
       "search",
       { keyword, type: 100, limit },
     );
@@ -377,9 +368,33 @@ const directProvider = {
       id: String(artist.id),
       name: artist.name,
       source: "netease",
-      avatarUrl: artist.img1v1Url ?? artist.picUrl ?? null,
-      trackCount: null,
+      avatarUrl: artist.picUrl ?? artist.img1v1Url ?? null,
+      trackCount: artist.musicSize ?? null,
       albumCount: artist.albumSize ?? null,
+    }));
+  },
+  searchPlaylists: async (keyword: string, limit: number) => {
+    const body = await invoke<{
+      result?: {
+        playlists?: Array<{
+          id: number;
+          name: string;
+          coverImgUrl?: string;
+          trackCount?: number;
+          subscribed?: boolean;
+          creator?: { userId?: number; nickname?: string };
+        }>;
+      };
+    }>("search", { keyword, type: 1000, limit });
+    return (body.result?.playlists ?? []).map((playlist): ProviderPlaylist => ({
+      id: String(playlist.id),
+      name: playlist.name,
+      trackCount: playlist.trackCount ?? 0,
+      subscribed: Boolean(playlist.subscribed),
+      owned: false,
+      creatorName: playlist.creator?.nickname ?? null,
+      coverColor: "#c9d3f2",
+      coverUrl: playlist.coverImgUrl ?? null,
     }));
   },
   artistTopSongs: async (artistId: string) => {
@@ -387,10 +402,12 @@ const directProvider = {
     return { tracks: (body.songs ?? []).map((song) => mapSong(song)) };
   },
   lyrics: async (trackId: string) => {
-    const body = await invoke<{ lrc?: { lyric?: string }; tlyric?: { lyric?: string } }>("lyric", {
+    const body = await invoke<{ lrc?: { lyric?: string }; tlyric?: { lyric?: string }; yrc?: { lyric?: string } }>("lyric", {
       id: Number(trackId.replace("netease:", "")),
     });
-    return { lyrics: withTranslations(parseLrc(body.lrc?.lyric), body.tlyric?.lyric) };
+    const wordLines = parseYrc(body.yrc?.lyric);
+    const lines = wordLines.length ? wordLines : parseLrc(body.lrc?.lyric);
+    return { lyrics: withTranslations(lines, body.tlyric?.lyric) };
   },
   streamMeta: (trackId: string, level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster") =>
     directStreamMeta(trackId, level),
@@ -448,8 +465,26 @@ export async function resolveDirectStreamUrl(
   level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster",
 ): Promise<DirectStreamMeta | null> {
   try {
-    return await directStreamMeta(trackId, level);
+    // The native bridge is normally fast, but a wedged CDN request must not
+    // leave the player UI on "正在获取播放链接…" forever.
+    return await withTimeout(directStreamMeta(trackId, level), 20_000);
   } catch {
     return null;
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("stream resolution timed out")), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }

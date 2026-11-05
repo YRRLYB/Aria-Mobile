@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, Loader2, Server, Smartphone, Wifi } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Server, Smartphone, Wifi } from "./icons";
 import { enableDirectMode, isDirectCapable } from "./native/neteaseDirect";
 import { parsePairingPayload, readConnection, saveConnection, verifyConnection } from "./connection";
 

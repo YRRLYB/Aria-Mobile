@@ -46,7 +46,7 @@ public class NeteaseDirectPlugin extends Plugin {
                 JSObject result = new JSObject();
                 result.put("ok", !unikey.isEmpty());
                 result.put("key", unikey);
-                result.put("qrUrl", "https://music.163.com/login?codekey=" + unikey);
+                result.put("qrUrl", NeteaseClient.loginQrUrl(getContext(), unikey));
                 call.resolve(result);
             } catch (Throwable error) {
                 android.util.Log.e("NeteaseDirect", "loginQrStart crashed", error);
@@ -97,11 +97,16 @@ public class NeteaseDirectPlugin extends Plugin {
             try {
                 JSONObject body = NeteaseClient.loginCellphone(getContext(), phone, password, captcha, countryCode);
                 int code = body.optInt("code", 0);
+                String message = body.optString("message", body.optString("msg", ""));
+                // A code-200 response can still carry "环境异常" without a
+                // MUSIC_U cookie. Treat only a persisted session as success so
+                // the UI never claims a login that cannot play anything.
+                boolean ok = code == 200 && NeteaseSession.isLoggedIn(getContext());
                 JSObject result = new JSObject();
-                result.put("ok", code == 200);
+                result.put("ok", ok);
                 result.put("code", code);
-                result.put("message", code == 200 ? "登录成功" : body.optString("message", body.optString("msg", "登录失败(" + code + ")")));
-                if (code == 200) {
+                result.put("message", ok ? "登录成功" : (message.isEmpty() ? "登录失败(" + code + ")" : message));
+                if (ok) {
                     result.put("nickname", NeteaseSession.nickname(getContext()));
                     result.put("avatarUrl", NeteaseSession.avatarUrl(getContext()));
                 }
@@ -130,10 +135,13 @@ public class NeteaseDirectPlugin extends Plugin {
             try {
                 JSONObject body = NeteaseClient.captchaSent(getContext(), phone, countryCode);
                 int code = body.optInt("code", 0);
+                String message = body.optString("message", body.optString("msg", ""));
+                boolean abnormal = message.contains("环境异常") || message.contains("频繁") || message.contains("限制");
+                boolean ok = code == 200 && !abnormal;
                 JSObject result = new JSObject();
-                result.put("ok", code == 200);
+                result.put("ok", ok);
                 result.put("code", code);
-                result.put("message", code == 200 ? "验证码已发送" : body.optString("message", body.optString("msg", "发送失败(" + code + ")")));
+                result.put("message", ok ? "验证码已发送" : (message.isEmpty() ? "发送失败(" + code + ")" : message));
                 call.resolve(result);
             } catch (Throwable error) {
                 android.util.Log.e("NeteaseDirect", "captchaSent crashed", error);
