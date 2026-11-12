@@ -4,9 +4,16 @@ const MEMORY_ENTRIES = 160;
 const FETCH_TIMEOUT_MS = 6_000;
 const FAILURE_COOLDOWN_MS = 5_000;
 
+export type CoverCacheStats = {
+  entries: number;
+  bytes: number;
+  memoryEntries: number;
+};
+
 const memory = new Map<string, string>();
 const pending = new Map<string, Promise<string>>();
 const failures = new Map<string, number>();
+let generation = 0;
 
 function isRemote(url: string): boolean {
   return /^https?:\/\//i.test(url);
@@ -66,6 +73,52 @@ function remember(url: string, objectUrl: string): void {
   }
 }
 
+export async function getCoverCacheStats(): Promise<CoverCacheStats> {
+  const stats: CoverCacheStats = { entries: 0, bytes: 0, memoryEntries: memory.size };
+  const cache = await openCache();
+  if (!cache) return stats;
+  try {
+    const keys = await cache.keys();
+    stats.entries = keys.length;
+    const sizes = await Promise.all(keys.map(async (key) => {
+      try {
+        const response = await cache.match(key);
+        if (!response) return 0;
+        return (await response.blob()).size;
+      } catch {
+        return 0;
+      }
+    }));
+    stats.bytes = sizes.reduce((total, size) => total + size, 0);
+  } catch {
+    // Stats are informational; a failed read should not block settings.
+  }
+  return stats;
+}
+
+/**
+ * Drops the persisted cover bytes and the in-memory lookup map. Object URLs
+ * already attached to mounted <img> elements are intentionally not revoked:
+ * revoking them would blank every visible cover, and they stay bounded by the
+ * memory LRU until the page is reloaded.
+ */
+export async function clearCoverCache(): Promise<CoverCacheStats> {
+  generation += 1;
+  memory.clear();
+  pending.clear();
+  failures.clear();
+  const cache = await openCache();
+  if (cache) {
+    try {
+      const keys = await cache.keys();
+      await Promise.all(keys.map((key) => cache.delete(key)));
+    } catch {
+      // Best-effort; the next stats read reports what remains.
+    }
+  }
+  return getCoverCacheStats();
+}
+
 /**
  * Resolves a cover URL to a locally cached object URL. NetEase artwork is
  * immutable, so caching the bytes avoids re-downloading the same cover every
@@ -90,12 +143,14 @@ export function cachedCoverUrl(url: string | undefined | null): Promise<string> 
   const inFlight = pending.get(target);
   if (inFlight) return inFlight;
 
+  const taskGeneration = generation;
   const task = (async () => {
     const cache = await openCache();
     if (cache) {
       try {
         const hit = await cache.match(target);
         if (hit) {
+          if (taskGeneration !== generation) return target;
           const objectUrl = URL.createObjectURL(await hit.blob());
           remember(target, objectUrl);
           return objectUrl;
@@ -115,21 +170,26 @@ export function cachedCoverUrl(url: string | undefined | null): Promise<string> 
         signal: controller?.signal,
       });
       if (!response.ok) throw new Error(`cover ${response.status}`);
+      if (taskGeneration !== generation) return target;
       if (cache) {
         await cache.put(target, response.clone()).catch(() => undefined);
         void trimCache(cache);
       }
       const objectUrl = URL.createObjectURL(await response.blob());
+      if (taskGeneration !== generation) {
+        try { URL.revokeObjectURL(objectUrl); } catch { /* best effort */ }
+        return target;
+      }
       remember(target, objectUrl);
       failures.delete(target);
       return objectUrl;
     } catch {
-      failures.set(target, Date.now());
+      if (taskGeneration === generation) failures.set(target, Date.now());
       // Let the normal <img> path handle it; do not memoize the failure.
       return target;
     } finally {
       if (timer !== null) window.clearTimeout(timer);
-      pending.delete(target);
+      if (taskGeneration === generation) pending.delete(target);
     }
   })();
 

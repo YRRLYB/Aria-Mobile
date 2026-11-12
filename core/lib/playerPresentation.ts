@@ -5,6 +5,7 @@ export type QualityLevel = "standard" | "higher" | "exhigh" | "lossless" | "hire
 export type CoverPalette = { primary: string; secondary: string };
 export type PlayerSideView = "lyrics" | "queue";
 export type AudioOutputMode = "system" | "shared" | "exclusive";
+export type CachedQueueSource = { type: string; id?: string };
 
 export type CachedPlayerState = {
   activeTrackId?: string;
@@ -13,6 +14,7 @@ export type CachedPlayerState = {
   playerSideView?: PlayerSideView;
   playQueueIds?: string[];
   playQueueSnapshots?: Track[];
+  playQueueSource?: CachedQueueSource;
   currentTime?: number;
   volume?: number;
   qualityLevel?: QualityLevel;
@@ -22,9 +24,36 @@ export type CachedPlayerState = {
 };
 
 const playerCacheKey = "aria-player-state";
+const playerPositionKey = "aria-player-position";
 const lyricCacheKey = "aria-lyrics-cache";
 const audioSettingsKey = "aria-audio-settings";
 export const maxCachedQueueTracks = 1200;
+
+function readCachedPlayerPosition(): { trackId: string; position: number } | null {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(playerPositionKey) || "null") as {
+      trackId?: unknown;
+      position?: unknown;
+    } | null;
+    if (!parsed || typeof parsed.trackId !== "string" || typeof parsed.position !== "number") return null;
+    if (!Number.isFinite(parsed.position) || parsed.position <= 0) return null;
+    return { trackId: parsed.trackId, position: Math.min(parsed.position, 24 * 60 * 60) };
+  } catch {
+    return null;
+  }
+}
+
+export function writeCachedPlayerPosition(trackId: string, position: number) {
+  if (!trackId || !Number.isFinite(position)) return;
+  try {
+    window.localStorage.setItem(playerPositionKey, JSON.stringify({
+      trackId,
+      position: Math.max(0, position),
+    }));
+  } catch {
+    // Playhead persistence is best-effort.
+  }
+}
 
 export const qualityOptions: Array<{ value: QualityLevel; label: string }> = [
   { value: "standard", label: "标准" },
@@ -61,15 +90,30 @@ export function readCachedPlayerState(): CachedPlayerState {
     const cachedQueueIds = Array.isArray(parsed.playQueueIds)
       ? parsed.playQueueIds.filter((id): id is string => typeof id === "string")
       : [];
+    const source = parsed.playQueueSource;
+    const playQueueSource =
+      source && typeof source.type === "string" && source.type.length > 0
+        ? { type: source.type, id: typeof source.id === "string" ? source.id : undefined }
+        : undefined;
+    const activeTrackId = typeof parsed.activeTrackId === "string" ? parsed.activeTrackId : undefined;
+    const savedPosition = readCachedPlayerPosition();
+    const currentTime = savedPosition && savedPosition.trackId === activeTrackId
+      ? savedPosition.position
+      : typeof parsed.currentTime === "number"
+        && Number.isFinite(parsed.currentTime)
+        && parsed.currentTime > 0
+        ? Math.min(parsed.currentTime, 24 * 60 * 60)
+        : undefined;
 
     return {
-      activeTrackId: typeof parsed.activeTrackId === "string" ? parsed.activeTrackId : undefined,
+      activeTrackId,
       activeTrackSnapshot: hydrateTrackLyrics(normalizeTrackSnapshot(parsed.activeTrackSnapshot)),
       activeView: parsed.activeView && navIds.has(parsed.activeView) ? parsed.activeView : undefined,
       playerSideView: parsed.playerSideView === "queue" ? "queue" : parsed.playerSideView === "lyrics" ? "lyrics" : undefined,
       playQueueIds: mergeTrackIds(cachedQueueIds, playQueueSnapshots.map((track) => track.id)),
       playQueueSnapshots,
-      currentTime: undefined,
+      playQueueSource,
+      currentTime,
       volume:
         typeof parsed.volume === "number" && Number.isFinite(parsed.volume)
           ? Math.max(0, Math.min(100, parsed.volume))
@@ -218,6 +262,11 @@ function normalizeTrackSnapshot(value: unknown): Track | undefined {
 export function writeCachedPlayerState(state: CachedPlayerState & { updatedAt?: number }) {
   try {
     window.localStorage.setItem(playerCacheKey, JSON.stringify(state));
+    if (state.activeTrackId && typeof state.currentTime === "number") {
+      writeCachedPlayerPosition(state.activeTrackId, state.currentTime);
+    } else if (!state.activeTrackId) {
+      window.localStorage.removeItem(playerPositionKey);
+    }
   } catch {
     // Player state cache is a comfort feature; playback should continue without it.
   }

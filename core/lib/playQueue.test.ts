@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Track } from "@/data/music";
-import { mergeQueueTrackSources } from "./playQueue";
+import { mergeQueueTrackSources, sameTrackSet } from "./playQueue";
 
 function track(id: string, title: string, source: Track["source"] = "netease"): Track {
   return {
@@ -37,5 +37,11 @@ describe("playQueue", () => {
     const unavailable = { ...track("b", "Unavailable"), streamUrl: undefined };
 
     expect(mergeQueueTrackSources(["a", "a", "b"], [playable, unavailable], [])).toEqual([playable]);
+  });
+
+  it("detects when a priority list is already the active queue", () => {
+    expect(sameTrackSet(["a", "b", "c"], ["c", "a", "b"])).toBe(true);
+    expect(sameTrackSet(["a", "b"], ["a", "b", "c"])).toBe(false);
+    expect(sameTrackSet(["a", "b"], ["a", "c"])).toBe(false);
   });
 });

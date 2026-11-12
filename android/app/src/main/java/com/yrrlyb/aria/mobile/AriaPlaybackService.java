@@ -370,15 +370,7 @@ public class AriaPlaybackService extends MediaSessionService {
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                 .build();
         try {
-            File cacheDir = new File(getCacheDir(), "audio-cache");
-            audioCache = new SimpleCache(
-                    cacheDir,
-                    new LeastRecentlyUsedCacheEvictor(128L * 1024 * 1024),
-                    new StandaloneDatabaseProvider(this));
-            cachedDataSourceFactory = new CacheDataSource.Factory()
-                    .setCache(audioCache)
-                    .setUpstreamDataSourceFactory(new DefaultDataSource.Factory(this))
-                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+            createAudioCache();
         } catch (Throwable error) {
             android.util.Log.w("AriaPlayback", "audio cache unavailable", error);
             audioCache = null;
@@ -425,6 +417,40 @@ public class AriaPlaybackService extends MediaSessionService {
         screenFilter.addAction(Intent.ACTION_SCREEN_ON);
         screenFilter.addAction(Intent.ACTION_USER_PRESENT);
         ContextCompat.registerReceiver(this, screenReceiver, screenFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
+    }
+
+    private void createAudioCache() {
+        File cacheDir = new File(getCacheDir(), "audio-cache");
+        audioCache = new SimpleCache(
+                cacheDir,
+                new LeastRecentlyUsedCacheEvictor(128L * 1024 * 1024),
+                new StandaloneDatabaseProvider(this));
+        cachedDataSourceFactory = new CacheDataSource.Factory()
+                .setCache(audioCache)
+                .setUpstreamDataSourceFactory(new DefaultDataSource.Factory(this))
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+    }
+
+    /** Drops both the cache index and the downloaded spans, then recreates it. */
+    private void resetAudioCache() {
+        ExoPlayer activePlayer = player;
+        if (activePlayer != null) {
+            activePlayer.stop();
+            activePlayer.clearMediaItems();
+        }
+        if (audioCache != null) {
+            try { audioCache.release(); } catch (Throwable ignored) { }
+            audioCache = null;
+        }
+        cachedDataSourceFactory = null;
+        deleteTree(new File(getCacheDir(), "audio-cache"));
+        try {
+            createAudioCache();
+        } catch (Throwable error) {
+            android.util.Log.w("AriaPlayback", "audio cache recreate failed", error);
+            audioCache = null;
+            cachedDataSourceFactory = new DefaultDataSource.Factory(this);
+        }
     }
 
     @Override
@@ -632,6 +658,67 @@ public class AriaPlaybackService extends MediaSessionService {
             service.pendingEqualizerPreset = preset;
             service.applyEqualizerPreset(preset);
         });
+    }
+
+    interface CacheResultSink {
+        void done(Map<String, Object> stats);
+    }
+
+    static Map<String, Object> getAudioCacheStats(Context context) {
+        return audioCacheStats(new File(context.getCacheDir(), "audio-cache"));
+    }
+
+    static void clearAudioCache(Context context, CacheResultSink sink) {
+        File cacheDir = new File(context.getCacheDir(), "audio-cache");
+        AriaPlaybackService service = instance;
+        if (service == null) {
+            deleteTree(cacheDir);
+            sink.done(audioCacheStats(cacheDir));
+            return;
+        }
+        service.runOnMain(() -> {
+            service.resetAudioCache();
+            sink.done(audioCacheStats(cacheDir));
+        });
+    }
+
+    private static Map<String, Object> audioCacheStats(File directory) {
+        long[] totals = treeStats(directory);
+        Map<String, Object> result = new HashMap<>();
+        result.put("bytes", totals[0]);
+        result.put("files", totals[1]);
+        result.put("maxBytes", 128L * 1024 * 1024);
+        return result;
+    }
+
+    /** Returns { total bytes, file count } for a directory tree. */
+    private static long[] treeStats(File directory) {
+        long bytes = 0;
+        long files = 0;
+        File[] children = directory.listFiles();
+        if (children == null) return new long[]{0, 0};
+        for (File child : children) {
+            if (child.isDirectory()) {
+                long[] nested = treeStats(child);
+                bytes += nested[0];
+                files += nested[1];
+            } else {
+                bytes += child.length();
+                files += 1;
+            }
+        }
+        return new long[]{bytes, files};
+    }
+
+    private static void deleteTree(File file) {
+        if (!file.exists()) return;
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) deleteTree(child);
+        }
+        // Cache files can be held briefly by a released database; a failed
+        // delete is retried by the next app launch.
+        file.delete();
     }
 
     static void stopPlayback() {

@@ -34,6 +34,17 @@ export function orderedQueueIds(tracks: Track[]) {
   return ids;
 }
 
+/** True when both queues contain exactly the same track ids, in any order. */
+export function sameTrackSet(left: string[], right: string[]) {
+  const leftIds = new Set(left.filter(Boolean));
+  const rightIds = new Set(right.filter(Boolean));
+  if (leftIds.size !== rightIds.size) return false;
+  for (const id of leftIds) {
+    if (!rightIds.has(id)) return false;
+  }
+  return true;
+}
+
 export function shuffleQueueIds(tracks: Track[], anchorId?: string) {
   const ids = orderedQueueIds(tracks);
   const anchor = anchorId && ids.includes(anchorId) ? anchorId : ids[0];

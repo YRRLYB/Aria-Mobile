@@ -56,6 +56,12 @@ export type EqualizerSettings = {
   presets: string[];
 };
 
+export type AudioCacheStats = {
+  bytes: number;
+  files: number;
+  maxBytes: number;
+};
+
 export type AriaAudioPluginInterface = {
   load(payload: AriaAudioLoadPayload): Promise<void>;
   loadNext(payload: {
@@ -77,6 +83,8 @@ export type AriaAudioPluginInterface = {
   getEqualizerSettings(): Promise<EqualizerSettings>;
   setEqualizerPreset(options: { preset: number }): Promise<void>;
   stop(): Promise<void>;
+  getCacheStats(): Promise<AudioCacheStats>;
+  clearCache(): Promise<AudioCacheStats>;
   getState(): Promise<{ active: boolean; position: number; duration: number; paused: boolean; trackId: string | null; requestId?: string | null }>;
   requestNotifications(): Promise<{ granted?: boolean }>;
   getUsbExclusiveSettings(): Promise<UsbExclusiveSettings>;

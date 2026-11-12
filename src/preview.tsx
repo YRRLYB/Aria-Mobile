@@ -228,6 +228,9 @@ const controls = {
   providerPlaylists: playlists,
   selectedPlaylist: null,
   playlistLoading: false,
+  playlistProgress: baseTracks[2]
+    ? { p1: { trackId: baseTracks[2].id, position: 73, updatedAt: Date.now() } }
+    : {},
   neteaseAccount: {
     connected: true,
     nickname: "云村听友",
@@ -249,7 +252,10 @@ const controls = {
   connection: { serverUrl: "http://192.168.1.29:3636", token: "aria-demo-token" },
   searchQuery: "夜",
   chooseTrack: noop,
+  playShuffledTracks: noop,
+  playPlaylist: noop,
   togglePlayback: noop,
+  stopPlayback: noop,
   playNext: noop,
   playPrevious: noop,
   clearQueue: noop,

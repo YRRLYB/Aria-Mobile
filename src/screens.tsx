@@ -47,11 +47,11 @@ import { APP_VERSION } from "./version";
 import type { NeteaseAccountSummary, ProviderPlaylist } from "@/lib/api";
 import type { MobileControls } from "./MobileApp";
 import { rememberSearch, newestLiked } from "./libraryStorage";
-import { AriaAudio, isNativeApp } from "./native/ariaAudio";
+import { AriaAudio, isNativeApp, type AudioCacheStats } from "./native/ariaAudio";
 import { DetailHeader, EmptyState, InlineError, LoadingState, PageHeader, Surface } from "./ui";
 import { groupTracksByAlbum, formatTotalDuration, type AlbumGroup } from "./libraryView";
 import { ArtistAvatar } from "./ArtistAvatar";
-import { cachedCoverUrl } from "./coverCache";
+import { cachedCoverUrl, clearCoverCache, getCoverCacheStats, type CoverCacheStats } from "./coverCache";
 
 export function TrackRow({
   track,
@@ -159,7 +159,7 @@ function HorizontalTrackCard({
   );
 }
 
-export function PlayAllButton({ onPlay, count }: { onPlay: () => void; count: number }) {
+export function PlayAllButton({ onPlay, count, label }: { onPlay: () => void; count: number; label?: string }) {
   if (!count) return null;
   return (
     <button
@@ -168,7 +168,7 @@ export function PlayAllButton({ onPlay, count }: { onPlay: () => void; count: nu
       className="tap-scale flex items-center gap-1.5 whitespace-nowrap rounded-full bg-neutral-950 px-3 py-1.5 text-xs font-medium text-white"
     >
       <Play className="size-3" />
-      播放全部 {count}
+      {label ?? `播放全部 ${count}`}
     </button>
   );
 }
@@ -838,12 +838,16 @@ export function PlaylistDetail({
   const {
     playlistTracks,
     playlistLoading,
+    playlistProgress,
     chooseTrack,
     toggleLikeTrack,
     likedTrackIds,
     neteaseLikedIds,
     playShuffledTracks,
+    playPlaylist,
   } = controls;
+  const saved = playlistProgress[playlist.id];
+  const savedTrack = saved ? playlistTracks.find((track) => track.id === saved.trackId) : undefined;
   return (
     <div>
       <DetailHeader
@@ -858,13 +862,18 @@ export function PlaylistDetail({
             {playlist.creatorName && !playlist.owned
               ? ` · ${playlist.subscribed ? "收藏自 " : ""}${playlist.creatorName}`
               : ""}
+            {savedTrack ? ` · 上次播放到《${savedTrack.title}》` : ""}
           </>
         }
         visual={<PlaylistCover playlist={playlist} tracks={playlistTracks} className="size-28 rounded-[1.1rem]" />}
         actions={
           <>
-            <PlayAllButton onPlay={() => playlistTracks[0] && chooseTrack(playlistTracks[0].id, playlistTracks)} count={playlistTracks.length} />
-            <RandomPlayButton onPlay={() => playShuffledTracks(playlistTracks)} count={playlistTracks.length} />
+            <PlayAllButton
+              onPlay={() => playPlaylist(playlist, playlistTracks)}
+              count={playlistTracks.length}
+              label={savedTrack ? `继续播放 ${playlistTracks.length}` : undefined}
+            />
+            <RandomPlayButton onPlay={() => playShuffledTracks(playlistTracks, playlist.id)} count={playlistTracks.length} />
           </>
         }
       />
@@ -880,7 +889,7 @@ export function PlaylistDetail({
               index={index}
               active={controls.activeTrackId === track.id}
               liked={Boolean(neteaseLikedIds[track.id] || likedTrackIds[track.id])}
-              onPlay={() => chooseTrack(track.id, playlistTracks)}
+              onPlay={() => chooseTrack(track.id, playlistTracks, { playlistId: playlist.id })}
               onLike={() => toggleLikeTrack(track.id)}
             />
           ))}
@@ -1425,6 +1434,7 @@ export function SettingsScreen(controls: MobileControls) {
 
       {isNativeApp() && <LockScreenSettings />}
       {isNativeApp() && <BackgroundPlaybackSettings />}
+      <CacheSettings controls={controls} />
 
       {isNativeApp() && (
         <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
@@ -1542,6 +1552,135 @@ function BackgroundPlaybackSettings() {
         </button>
       </div>
       {hint && <p role="status" className="mt-2 text-[11px] leading-4 text-neutral-500">{hint}</p>}
+    </section>
+  );
+}
+
+function formatCacheSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function CacheSettings({ controls }: { controls: MobileControls }) {
+  const native = isNativeApp();
+  const [coverStats, setCoverStats] = useState<CoverCacheStats>({ entries: 0, bytes: 0, memoryEntries: 0 });
+  const [audioStats, setAudioStats] = useState<AudioCacheStats | null>(null);
+  const [busy, setBusy] = useState<"cover" | "audio" | null>(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void getCoverCacheStats()
+        .then((stats) => { if (!cancelled) setCoverStats(stats); })
+        .catch(() => undefined);
+      if (native) {
+        void AriaAudio.getCacheStats()
+          .then((stats) => { if (!cancelled) setAudioStats(stats); })
+          .catch(() => undefined);
+      }
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [native]);
+
+  async function clearCovers() {
+    if (busy) return;
+    setBusy("cover");
+    setMessage("");
+    try {
+      setCoverStats(await clearCoverCache());
+      setMessage("封面缓存已清理");
+    } catch {
+      setMessage("封面缓存清理失败，请重试");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearAudio() {
+    if (busy || !native) return;
+    const confirmed = window.confirm("清空音频缓存会停止当前播放，确定继续吗？");
+    if (!confirmed) return;
+    setBusy("audio");
+    setMessage("");
+    try {
+      const stats = await AriaAudio.clearCache();
+      setAudioStats(stats);
+      controls.stopPlayback();
+      setMessage("音频缓存已清理");
+    } catch {
+      setMessage("音频缓存清理失败，请重试");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Storage</p>
+      <h3 className="mt-1 text-base font-semibold">缓存管理</h3>
+      <div className="mt-3 divide-y divide-neutral-950/[0.05]">
+        <div className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-950/[0.04]">
+            <Disc3 className="size-4 text-neutral-500" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">封面缓存</p>
+            <p className="mt-0.5 truncate text-[11px] text-neutral-500">
+              {coverStats.entries} 张 · {formatCacheSize(coverStats.bytes)}
+              {coverStats.memoryEntries ? ` · ${coverStats.memoryEntries} 张内存副本` : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void clearCovers()}
+            disabled={busy !== null || (coverStats.entries === 0 && coverStats.memoryEntries === 0)}
+            className="tap-scale shrink-0 rounded-full bg-neutral-950/[0.05] px-3 py-1.5 text-[11px] font-medium text-neutral-700 disabled:opacity-40"
+          >
+            {busy === "cover" ? "清理中…" : "清理"}
+          </button>
+        </div>
+        {native && (
+          <div className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-950/[0.04]">
+              <Download className="size-4 text-neutral-500" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">音频缓存</p>
+              <p className="mt-0.5 truncate text-[11px] text-neutral-500">
+                {audioStats ? `${formatCacheSize(audioStats.bytes)} / 128 MB` : "读取中…"}
+                {audioStats && audioStats.files > 0 ? ` · ${audioStats.files} 个文件` : ""}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void clearAudio()}
+              disabled={busy !== null || !audioStats || audioStats.bytes === 0}
+              className="tap-scale shrink-0 rounded-full bg-neutral-950/[0.05] px-3 py-1.5 text-[11px] font-medium text-neutral-700 disabled:opacity-40"
+            >
+              {busy === "audio" ? "清理中…" : "清空"}
+            </button>
+          </div>
+        )}
+      </div>
+      <p className="mt-3 text-[11px] leading-4 text-neutral-400">
+        封面缓存加快列表和播放页加载；音频缓存保留最近播放的片段，最多 128 MB。清理不会删除离线下载。
+      </p>
+      {message && <p role="status" className="mt-2 text-[11px] text-neutral-500">{message}</p>}
     </section>
   );
 }

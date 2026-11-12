@@ -187,6 +187,16 @@ public class AriaAudioPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getCacheStats(PluginCall call) {
+        call.resolve(toJsObject(AriaPlaybackService.getAudioCacheStats(getContext())));
+    }
+
+    @PluginMethod
+    public void clearCache(PluginCall call) {
+        AriaPlaybackService.clearAudioCache(getContext(), stats -> call.resolve(toJsObject(stats)));
+    }
+
+    @PluginMethod
     public void stop(PluginCall call) {
         AriaPlaybackService.stopPlayback();
         call.resolve();

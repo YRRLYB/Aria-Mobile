@@ -8,6 +8,7 @@ import {
   readCachedAudioSettings,
   readCachedPlayerState,
   writeCachedAudioSettings,
+  writeCachedPlayerPosition,
   writeCachedPlayerState,
   type QualityLevel,
 } from "@/lib/playerPresentation";
@@ -19,7 +20,7 @@ import {
 } from "@/lib/playHistory";
 import { commitPlaybackTime, getPlaybackTime, resetPlaybackTime, usePlaybackTime } from "@/lib/playbackClock";
 import { getTrackSearchSignature } from "@/lib/trackMappers";
-import { materializeQueueIds, mergeQueueTrackSources, orderedQueueIds, playableTracks } from "@/lib/playQueue";
+import { materializeQueueIds, mergeQueueTrackSources, orderedQueueIds, playableTracks, sameTrackSet } from "@/lib/playQueue";
 import { createLocalArtistSummaries, type ArtistSummary } from "@/lib/artists";
 import { useLocalLibrary } from "@/hooks/useLocalLibrary";
 import { useNeteaseData } from "@/hooks/useNeteaseData";
@@ -49,11 +50,27 @@ import { hydrateLibrary, readLibrary, saveLibrary, compactTrack, newestLiked } f
 import { CollectionScreen } from "./Collections";
 import { positiveAudioValue, type PlaybackQuality } from "./playbackQuality";
 import { compactOfflineRecord, readOfflineRecords, writeOfflineRecords, type OfflineRecord } from "./offlineStorage";
+import {
+  readPlaylistProgress,
+  recordPlaylistProgress,
+  writePlaylistProgress,
+  type PlaylistProgressMap,
+} from "./playlistProgress";
 
 export type Gate = "checking" | "unconfigured" | "ready";
 export type TabId = "home" | "library" | "search" | "settings";
 export type RepeatMode = "all" | "one";
 export type CollectionId = "liked" | "history" | "daily" | "roam";
+export type PlayQueueSource = { type: "playlist"; id: string };
+export type ChooseTrackOptions = {
+  shuffle?: boolean;
+  /** Keep the current queue order instead of materializing a new one. */
+  preserveQueue?: boolean;
+  /** Use this exact queue order (for a shuffle queue that was just created). */
+  queueIds?: string[];
+  playlistId?: string;
+  startPosition?: number;
+};
 
 export type TrackUpdateOptions = { includeHistory?: boolean };
 
@@ -99,6 +116,7 @@ export type MobileControls = {
   providerPlaylists: ProviderPlaylist[];
   selectedPlaylist: ProviderPlaylist | null;
   playlistLoading: boolean;
+  playlistProgress: PlaylistProgressMap;
   neteaseAccount: NeteaseAccountSummary | null;
   setNeteaseAccount: (account: NeteaseAccountSummary | null) => void;
   playHistory: PlayHistoryEntry[];
@@ -113,9 +131,11 @@ export type MobileControls = {
   libraryMeta: { roots: number; updatedAt: string | null };
   connection: { serverUrl: string; token: string };
   searchQuery: string;
-  chooseTrack: (trackId: string, preferredQueue?: Track[]) => void;
-  playShuffledTracks: (tracks: Track[]) => void;
+  chooseTrack: (trackId: string, preferredQueue?: Track[], options?: ChooseTrackOptions) => void;
+  playShuffledTracks: (tracks: Track[], playlistId?: string) => void;
+  playPlaylist: (playlist: ProviderPlaylist, tracks: Track[]) => void;
   togglePlayback: () => void;
+  stopPlayback: () => void;
   playNext: () => void;
   playPrevious: () => void;
   clearQueue: () => void;
@@ -213,11 +233,31 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     if (directMode) registerDirectProvider();
   }, [directMode]);
 
+  // Show the saved playhead immediately on relaunch. Pressing play then seeks
+  // back to this position through bootResumeRef instead of restarting at 0:00.
+  useEffect(() => {
+    const saved = cachedState.currentTime ?? 0;
+    if (cachedState.activeTrackId && saved > 0) commitPlaybackTime(saved, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [collection, setCollection] = useState<CollectionId | null>(null);
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [activeTrackId, setActiveTrackId] = useState<string>(cachedState.activeTrackId ?? idleTrack.id);
   const [playQueueIds, setPlayQueueIds] = useState<string[]>(cachedState.playQueueIds ?? []);
+  const [playQueueSource, setPlayQueueSource] = useState<PlayQueueSource | null>(() =>
+    cachedState.playQueueSource?.type === "playlist" && cachedState.playQueueSource.id
+      ? { type: "playlist", id: cachedState.playQueueSource.id }
+      : null,
+  );
+  const [playlistProgress, setPlaylistProgress] = useState<PlaylistProgressMap>(() => readPlaylistProgress());
+  const playlistProgressRef = useRef(playlistProgress);
+  playlistProgressRef.current = playlistProgress;
+  const playQueueSourceRef = useRef(playQueueSource);
+  playQueueSourceRef.current = playQueueSource;
+  const playlistProgressWriteAtRef = useRef(0);
+  const playbackHistoryRef = useRef<{ ids: string[]; cursor: number }>({ ids: [], cursor: -1 });
   const [playing, setPlaying] = useState(false);
   const playbackIntentRef = useRef(false);
   const [usbExclusive, setUsbExclusive] = useState<UsbExclusiveSettings>({ enabled: false, connected: false, supported: false });
@@ -281,6 +321,11 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
   const pendingSeekRef = useRef(0);
   const reloadPositionRef = useRef(0);
+  const bootResumeRef = useRef<{ trackId: string; position: number } | null>(
+    cachedState.activeTrackId && cachedState.currentTime
+      ? { trackId: cachedState.activeTrackId, position: cachedState.currentTime }
+      : null,
+  );
   const qualitySwitchTimerRef = useRef(0);
   const qualitySequenceRef = useRef(0);
   const handleTrackEndedRef = useRef<() => void>(() => undefined);
@@ -471,7 +516,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
   const chooseSequenceRef = useRef(0);
 
-  async function chooseTrack(trackId: string, preferredQueue?: Track[], options?: { shuffle?: boolean }) {
+  async function chooseTrack(trackId: string, preferredQueue?: Track[], options?: ChooseTrackOptions) {
     playbackIntentRef.current = true;
     if (nativeAudio && !batteryPromptShownRef.current) {
       batteryPromptShownRef.current = true;
@@ -530,27 +575,130 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       }
     }
 
-    const playableIds = materializeQueueIds(
-      queue.length ? queue : [targetTrack],
-      trackId,
-      options?.shuffle ?? shuffleEnabled,
-    );
+    const materializedIds = orderedQueueIds(queue.length ? queue : [targetTrack]);
+    // Clicking another row in the already-active queue must not shuffle the
+    // whole queue again; that is what made every "next" feel random. A new
+    // source list still gets a fresh shuffle anchored at the chosen track.
+    const preserveOrder = Boolean(options?.queueIds?.length)
+      || (!options?.shuffle && (
+        options?.preserveQueue === true
+        || (shuffleEnabled && playQueueIds.includes(trackId) && sameTrackSet(materializedIds, playQueueIds))
+      ));
+    const shouldShuffle = options?.shuffle ?? shuffleEnabled;
+    let playableIds = options?.queueIds?.length
+      ? [...options.queueIds]
+      : preserveOrder
+        ? (playQueueIds.includes(trackId) ? [...playQueueIds] : [trackId, ...playQueueIds])
+        : materializeQueueIds(queue.length ? queue : [targetTrack], trackId, shouldShuffle);
+    if (!playableIds.includes(trackId)) playableIds = [trackId, ...playableIds];
     if (playableIds.length) setPlayQueueIds(playableIds);
+    if (!preserveOrder) {
+      // A brand-new queue invalidates the old shuffle history.
+      playbackHistoryRef.current = { ids: [], cursor: -1 };
+    }
+    const nextSource = options?.playlistId
+      ? { type: "playlist" as const, id: options.playlistId }
+      : preserveOrder
+        ? playQueueSourceRef.current
+        : null;
+    setPlayQueueSource(nextSource);
     if (options?.shuffle) setShuffleEnabled(true);
-    pendingSeekRef.current = 0;
-    reloadPositionRef.current = 0;
+
+    const startAt = Math.max(0, options?.startPosition ?? 0);
+    bootResumeRef.current = null;
+    pendingSeekRef.current = startAt;
+    reloadPositionRef.current = startAt;
+    resetPlaybackTime();
+    if (startAt > 0) commitPlaybackTime(startAt, true);
+    setDurationSeconds(0);
     setActiveTrackId(trackId);
     setPlayRequest((value) => value + 1);
-    resetPlaybackTime();
-    setDurationSeconds(0);
     setPlaying(true);
   }
 
-  function playShuffledTracks(tracks: Track[]) {
+  function playShuffledTracks(tracks: Track[], playlistId?: string) {
     const playable = playableTracks(tracks);
     if (!playable.length) return;
     const random = playable[Math.floor(Math.random() * playable.length)];
-    void chooseTrack(random.id, tracks, { shuffle: true });
+    void chooseTrack(random.id, tracks, { shuffle: true, playlistId });
+  }
+
+  function playPlaylist(playlist: ProviderPlaylist, tracks: Track[]) {
+    const playable = playableTracks(tracks);
+    if (!playable.length) return;
+    const sourceMatches = playQueueSourceRef.current?.type === "playlist"
+      && playQueueSourceRef.current.id === playlist.id;
+    const activeInPlaylist = playable.find((track) => track.id === activeTrack.id);
+    // Tapping the playlist action while it is already the active source should
+    // continue the current song rather than restarting it.
+    if (sourceMatches && activeInPlaylist) {
+      if (!playing) {
+        playbackIntentRef.current = true;
+        setPlaying(true);
+      }
+      return;
+    }
+    const saved = playlistProgressRef.current[playlist.id];
+    const resumeTrack = saved ? playable.find((track) => track.id === saved.trackId) : undefined;
+    const target = resumeTrack ?? activeInPlaylist ?? playable[0];
+    let startPosition = 0;
+    if (resumeTrack && resumeTrack.id === target.id) startPosition = saved?.position ?? 0;
+    else if (target.id === activeTrack.id) startPosition = getPlaybackTime();
+    void chooseTrack(target.id, tracks, {
+      playlistId: playlist.id,
+      startPosition,
+    });
+  }
+
+  function rememberPlayedTrack(trackId: string) {
+    if (!trackId || trackId === idleTrack.id) return;
+    const history = playbackHistoryRef.current;
+    if (history.ids[history.cursor] === trackId) return;
+    // Pressing next after going back must follow the old forward history.
+    if (history.cursor < history.ids.length - 1) {
+      history.ids = history.ids.slice(0, history.cursor + 1);
+    }
+    history.ids.push(trackId);
+    if (history.ids.length > 200) history.ids = history.ids.slice(-200);
+    history.cursor = history.ids.length - 1;
+  }
+
+  function findHistoryTrack(trackId: string) {
+    return playQueueTracks.find((track) => track.id === trackId)
+      ?? trackById.get(trackId)
+      ?? restoredQueueTracks.find((track) => track.id === trackId);
+  }
+
+  /** Moves through the actual playback history instead of the queue order. */
+  function jumpPlaybackHistory(direction: 1 | -1): boolean {
+    const history = playbackHistoryRef.current;
+    if (history.cursor < 0) return false;
+    for (
+      let index = history.cursor + direction;
+      index >= 0 && index < history.ids.length;
+      index += direction
+    ) {
+      const trackId = history.ids[index];
+      if (!trackId || trackId === activeTrack.id) continue;
+      const track = findHistoryTrack(trackId);
+      if (!track?.streamUrl) continue;
+      history.cursor = index;
+      void chooseTrack(trackId, playQueueTracks, { preserveQueue: true });
+      return true;
+    }
+    return false;
+  }
+
+  function playNext() {
+    if (shuffleEnabled && jumpPlaybackHistory(1)) return;
+    pickRelativeTrack(1);
+  }
+
+  function playPrevious() {
+    // In shuffle mode "previous" means the song that actually played before
+    // this one, never a fresh random pick.
+    if (shuffleEnabled && jumpPlaybackHistory(-1)) return;
+    pickRelativeTrack(-1);
   }
 
   function pickRelativeTrack(direction: 1 | -1) {
@@ -578,14 +726,18 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     }
     if (!nextTrack) return;
     if (directMode && nextTrack.source === "netease" && !nextTrack.offline) {
-      // Sentinel: let chooseTrack resolve the stream, then switch.
-      void chooseTrack(nextTrack.id, queue);
+      // Sentinel: let chooseTrack resolve the stream, then switch. Never
+      // regenerate the shuffle order for a plain next/previous move.
+      void chooseTrack(nextTrack.id, queue, shouldRefreshShuffleQueue
+        ? { queueIds: nextQueueIds }
+        : { preserveQueue: true });
       return;
     }
     if (nextTrack.id === activeTrack.id) {
       restartActiveTrack();
       return;
     }
+    bootResumeRef.current = null;
     reloadPositionRef.current = 0;
     setActiveTrackId(nextTrack.id);
     setPlayRequest((value) => value + 1);
@@ -599,6 +751,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     playbackIntentRef.current = true;
     pendingSeekRef.current = 0;
     reloadPositionRef.current = 0;
+    bootResumeRef.current = null;
     resetPlaybackTime();
     setPlaying(true);
     setPlayRequest((value) => value + 1);
@@ -613,11 +766,14 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       restartActiveTrack();
       return;
     }
-    pickRelativeTrack(1);
+    playNext();
   }
   useEffect(() => {
     handleTrackEndedRef.current = handleTrackEnded;
-    relativeTrackRef.current = pickRelativeTrack;
+    relativeTrackRef.current = (direction) => {
+      if (direction === 1) playNext();
+      else playPrevious();
+    };
   });
 
   function seekTo(nextTime: number) {
@@ -928,9 +1084,26 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   function toggleShuffleQueue() {
     const nextShuffleEnabled = !shuffleEnabled;
     setShuffleEnabled(nextShuffleEnabled);
+    // A fresh shuffle session starts from the current song; old order/history
+    // belongs to the previous mode.
+    playbackHistoryRef.current = {
+      ids: activeTrack.id === idleTrack.id ? [] : [activeTrack.id],
+      cursor: activeTrack.id === idleTrack.id ? -1 : 0,
+    };
     const queue = resolveQueueForTrack(activeTrack.id);
     const playableIds = materializeQueueIds(queue.length ? queue : playQueueTracks, activeTrack.id, nextShuffleEnabled);
     if (playableIds.length) setPlayQueueIds(playableIds);
+  }
+
+  function stopPlayback() {
+    playbackIntentRef.current = false;
+    nativeSessionActiveRef.current = false;
+    setPlaying(false);
+    if (nativeAudio) {
+      void AriaAudio.stop().catch(() => undefined);
+    } else {
+      audioRef.current?.pause();
+    }
   }
 
   function toggleLikeTrack(trackId: string) {
@@ -1142,7 +1315,11 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       return;
     }
     const requestId = playbackSessionRef.current.begin(activeTrack.id);
-    const resumeAt = reloadPositionRef.current;
+    const bootResume = bootResumeRef.current?.trackId === activeTrack.id
+      ? bootResumeRef.current.position
+      : 0;
+    if (bootResumeRef.current?.trackId === activeTrack.id) bootResumeRef.current = null;
+    const resumeAt = reloadPositionRef.current > 0 ? reloadPositionRef.current : bootResume;
     reloadPositionRef.current = 0;
     if (resumeAt <= 0) {
       resetPlaybackTime();
@@ -1367,6 +1544,14 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       audio.pause();
       return;
     }
+    if (bootResumeRef.current?.trackId === activeTrack.id) {
+      const bootResume = bootResumeRef.current.position;
+      bootResumeRef.current = null;
+      if (bootResume > 0) {
+        pendingSeekRef.current = bootResume;
+        commitPlaybackTime(bootResume, true);
+      }
+    }
     if (pendingSeekRef.current <= 0) {
       resetPlaybackTime();
       setDurationSeconds(0);
@@ -1429,6 +1614,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     if (!playing || !activeTrack.streamUrl || activeTrack.id === idleTrack.id) return;
     if (activeTrackStartedRef.current === activeTrack.id) return;
     activeTrackStartedRef.current = activeTrack.id;
+    rememberPlayedTrack(activeTrack.id);
     setPlayHistory((current) => {
       const previous = current[0];
       const existing = current.find((entry) => entry.track.id === activeTrack.id);
@@ -1444,6 +1630,28 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     if (warmCandidates.length) void warmNeteaseTrackCache(warmCandidates);
   }, [activeTrack, playing, playQueueTracks, warmNeteaseTrackCache]);
 
+  // Remember where each playlist left off. The entry is keyed by playlist id,
+  // so switching to another source never resets this playlist to track one.
+  useEffect(() => {
+    const source = playQueueSource;
+    if (!source || activeTrack.id === idleTrack.id) return;
+    const now = Date.now();
+    const existing = playlistProgressRef.current[source.id];
+    const trackChanged = existing?.trackId !== activeTrack.id;
+    if (!trackChanged && now - playlistProgressWriteAtRef.current < 5000) return;
+    playlistProgressWriteAtRef.current = now;
+    const next = recordPlaylistProgress(
+      playlistProgressRef.current,
+      source.id,
+      activeTrack.id,
+      getPlaybackTime(),
+      now,
+    );
+    playlistProgressRef.current = next;
+    setPlaylistProgress(next);
+    writePlaylistProgress(next);
+  }, [activeTrack.id, currentTime, playQueueSource]);
+
   useEffect(() => {
     if (!("mediaSession" in navigator) || activeTrack.id === idleTrack.id) return;
     const artwork = activeTrack.cover.startsWith("http")
@@ -1457,9 +1665,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     });
     navigator.mediaSession.setActionHandler("play", () => setPlaying(true));
     navigator.mediaSession.setActionHandler("pause", () => setPlaying(false));
-    navigator.mediaSession.setActionHandler("previoustrack", () => pickRelativeTrack(-1));
-    navigator.mediaSession.setActionHandler("nexttrack", () => pickRelativeTrack(1));
-  }, [activeTrack, playing]);
+    navigator.mediaSession.setActionHandler("previoustrack", () => playPrevious());
+    navigator.mediaSession.setActionHandler("nexttrack", () => playNext());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTrack, playing, shuffleEnabled]);
 
   const cachedActiveTrackSnapshot = useMemo(
     () => activeTrack.id === idleTrack.id ? undefined : createCachedQueueSnapshots([compactTrack(activeTrack)], 1)[0],
@@ -1476,13 +1685,30 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       activeTrackSnapshot: cachedActiveTrackSnapshot,
       playQueueIds: playQueueIds.slice(0, 1200),
       playQueueSnapshots: cachedQueueSnapshots,
+      playQueueSource: playQueueSource ?? undefined,
+      currentTime: activeTrack.id === idleTrack.id ? undefined : getPlaybackTime(),
       volume,
       qualityLevel,
       shuffleEnabled,
       repeatMode,
       playing: false,
     });
-  }, [activeTrack.id, cachedActiveTrackSnapshot, cachedQueueSnapshots, playQueueIds, volume, qualityLevel, shuffleEnabled, repeatMode]);
+  }, [activeTrack.id, cachedActiveTrackSnapshot, cachedQueueSnapshots, playQueueIds, playQueueSource, volume, qualityLevel, shuffleEnabled, repeatMode]);
+
+  // Keep the saved playhead fresh without rewriting the whole player snapshot
+  // (which can contain 1200 queue tracks) on every timeupdate tick.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (activeTrack.id === idleTrack.id) return;
+      writeCachedPlayerPosition(activeTrack.id, getPlaybackTime());
+    }, 5000);
+    return () => {
+      window.clearInterval(timer);
+      if (activeTrack.id !== idleTrack.id) {
+        writeCachedPlayerPosition(activeTrack.id, getPlaybackTime());
+      }
+    };
+  }, [activeTrack.id]);
 
   useEffect(() => {
     window.localStorage.setItem("aria-liked-track-ids", JSON.stringify(likedTrackIds));
@@ -1647,6 +1873,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     providerPlaylists,
     selectedPlaylist,
     playlistLoading,
+    playlistProgress,
     neteaseAccount,
     setNeteaseAccount: netease.setNeteaseAccount,
     playHistory,
@@ -1663,10 +1890,18 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     searchQuery,
     chooseTrack,
     playShuffledTracks,
+    playPlaylist,
     togglePlayback,
-    playNext: () => pickRelativeTrack(1),
-    playPrevious: () => pickRelativeTrack(-1),
-    clearQueue: () => setPlayQueueIds(activeTrack.id === idleTrack.id ? [] : [activeTrack.id]),
+    stopPlayback,
+    playNext,
+    playPrevious,
+    clearQueue: () => {
+      setPlayQueueIds(activeTrack.id === idleTrack.id ? [] : [activeTrack.id]);
+      setPlayQueueSource(null);
+      playbackHistoryRef.current = activeTrack.id === idleTrack.id
+        ? { ids: [], cursor: -1 }
+        : { ids: [activeTrack.id], cursor: 0 };
+    },
     reorderQueue: (trackIds: string[]) => setPlayQueueIds((current) => {
       const visible = new Set(trackIds);
       const rest = current.filter((id) => !visible.has(id));
