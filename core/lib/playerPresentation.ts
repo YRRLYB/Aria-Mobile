@@ -444,6 +444,15 @@ export function mergeTracks(tracksToMerge: Track[]) {
 }
 
 export function trimTrackCache(tracksToMerge: Track[], maxItems = 800) {
-  const merged = mergeTracks(tracksToMerge);
+  // Fresh provider responses should replace stale snapshots so they pick up
+  // stream metadata, but never replace a playable copy with a metadata-only
+  // one. Keep first-seen ordering for stable lists.
+  const byId = new Map<string, Track>();
+  for (const track of tracksToMerge) {
+    const existing = byId.get(track.id);
+    if (existing?.streamUrl && !track.streamUrl) continue;
+    byId.set(track.id, track);
+  }
+  const merged = [...byId.values()];
   return merged.length > maxItems ? merged.slice(merged.length - maxItems) : merged;
 }

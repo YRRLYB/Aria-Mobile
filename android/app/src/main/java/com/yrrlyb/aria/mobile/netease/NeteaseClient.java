@@ -15,6 +15,8 @@ import org.json.JSONObject;
  */
 public final class NeteaseClient {
     private static final long DAY = 24L * 60 * 60 * 1000;
+    private static final long URL_COOLDOWN_MS = 60_000L;
+    private static volatile long urlCooldownUntil = 0L;
 
     private NeteaseClient() {
     }
@@ -238,8 +240,9 @@ public final class NeteaseClient {
             JSONObject playlist = detail.optJSONObject("playlist");
             JSONArray entries = playlist != null ? playlist.optJSONArray("trackIds") : null;
             if (entries == null) throw new NeteaseHttp.NeteaseException(502, "Liked playlist unavailable");
-            long[] ids = new long[entries.length()];
-            for (int i = 0; i < ids.length; i++) ids[i] = entries.getJSONObject(i).getLong("id");
+            int count = Math.min(entries.length(), 2000);
+            long[] ids = new long[count];
+            for (int i = 0; i < count; i++) ids[i] = entries.getJSONObject(i).getLong("id");
             JSONArray songs = songDetail(context, ids).getJSONArray("songs");
             java.util.Map<Long, JSONObject> byId = new java.util.HashMap<>();
             for (int i = 0; i < songs.length(); i++) {
@@ -247,12 +250,13 @@ public final class NeteaseClient {
                 byId.put(song.getLong("id"), song);
             }
             JSONArray ordered = new JSONArray();
-            for (int i = 0; i < ids.length; i++) {
+            for (int i = 0; i < count; i++) {
                 JSONObject song = byId.get(ids[i]);
                 if (song == null) continue;
-                // Some accounts expose playlist insertion times; otherwise
-                // retain the server's newest-first playlist order.
-                long added = entries.getJSONObject(i).optLong("t", 0);
+                // Some accounts expose insertion times; otherwise retain the
+                // server's newest-first playlist order.
+                JSONObject entry = entries.getJSONObject(i);
+                long added = entry.optLong("time", entry.optLong("at", entry.optLong("t", 0)));
                 if (added > 1000000000L) song.put("likedAt", added < 100000000000L ? added * 1000 : added);
                 ordered.put(song);
             }
@@ -264,8 +268,18 @@ public final class NeteaseClient {
 
     /** Daily recommendations: body.data.dailySongs. */
     public static JSONObject dailySongs(Context context) throws NeteaseHttp.NeteaseException {
-        return NeteaseHttp.cachedRequest(context, "daily", 5 * 60_000L,
-                "/api/v3/discovery/recommend/songs", new JSONObject(), "weapi");
+        return NeteaseHttp.cachedRequest(
+                context,
+                "daily:" + NeteaseSession.userId(context),
+                5 * 60_000L,
+                "/api/v3/discovery/recommend/songs",
+                new JSONObject(),
+                "weapi",
+                (body) -> {
+                    JSONObject data = body.optJSONObject("data");
+                    JSONArray songs = data != null ? data.optJSONArray("dailySongs") : null;
+                    return songs != null && songs.length() > 0;
+                });
     }
 
     /** Personal FM: body.data[]. */
@@ -285,7 +299,14 @@ public final class NeteaseClient {
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "userPlaylists build failed");
         }
-        JSONObject result = NeteaseHttp.cachedRequest(context, "playlists", 10 * 60_000L, "/api/user/playlist", data, "weapi");
+        JSONObject result = NeteaseHttp.cachedRequest(
+                context,
+                "playlists:" + NeteaseSession.userId(context),
+                10 * 60_000L,
+                "/api/user/playlist",
+                data,
+                "weapi",
+                (body) -> body.optJSONArray("playlist") != null);
         try {
             result.put("userId", NeteaseSession.userId(context));
         } catch (JSONException ignored) {
@@ -294,27 +315,43 @@ public final class NeteaseClient {
         return result;
     }
 
-    /** Playlist tracks: v6 detail for ids then v3 song detail for the page. */
+    /** Playlist tracks: v6 detail for ids then chunked/song-order-preserving song detail. */
     public static JSONObject playlistTracks(Context context, long playlistId) throws NeteaseHttp.NeteaseException {
         try {
             JSONObject detailData = new JSONObject().put("id", playlistId).put("n", 100000).put("s", 8);
-            JSONObject detail = NeteaseHttp.cachedRequest(context, "pl:" + playlistId, DAY,
-                    "/api/v6/playlist/detail", detailData, "eapi");
+            JSONObject detail = NeteaseHttp.cachedRequest(
+                    context,
+                    "pl:" + playlistId,
+                    DAY,
+                    "/api/v6/playlist/detail",
+                    detailData,
+                    "eapi",
+                    (body) -> body.optJSONObject("playlist") != null);
             JSONArray trackIds = detail.optJSONObject("playlist") != null
                     ? detail.optJSONObject("playlist").optJSONArray("trackIds")
                     : null;
-            if (trackIds == null) return detail;
+            if (trackIds == null) return new JSONObject().put("songs", new JSONArray());
 
-            StringBuilder ids = new StringBuilder("[");
-            for (int i = 0; i < trackIds.length(); i++) {
-                if (i > 0) ids.append(',');
+            int count = Math.min(trackIds.length(), 5000);
+            long[] ids = new long[count];
+            for (int i = 0; i < count; i++) {
                 JSONObject entry = trackIds.optJSONObject(i);
-                ids.append("{\"id\":").append(entry != null ? entry.optLong("id") : trackIds.optLong(i)).append('}');
+                ids[i] = entry != null ? entry.optLong("id") : trackIds.optLong(i);
             }
-            ids.append(']');
-            JSONObject songsData = new JSONObject().put("c", ids.toString());
-            return NeteaseHttp.cachedRequest(context, "pl-tracks:" + playlistId, 60 * 60_000L,
-                    "/api/v3/song/detail", songsData, "eapi");
+            JSONArray songs = songDetail(context, ids).optJSONArray("songs");
+            java.util.Map<Long, JSONObject> byId = new java.util.HashMap<>();
+            if (songs != null) {
+                for (int i = 0; i < songs.length(); i++) {
+                    JSONObject song = songs.optJSONObject(i);
+                    if (song != null) byId.put(song.optLong("id"), song);
+                }
+            }
+            JSONArray ordered = new JSONArray();
+            for (long id : ids) {
+                JSONObject song = byId.get(id);
+                if (song != null) ordered.put(song);
+            }
+            return new JSONObject().put("songs", ordered);
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "playlistTracks build failed");
         }
@@ -334,21 +371,69 @@ public final class NeteaseClient {
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "search build failed");
         }
-        return NeteaseHttp.cachedRequest(context, "search:" + type + ":" + limit + ":" + keyword, 5 * 60_000L,
-                "/api/cloudsearch/pc", data, "eapi");
+        return NeteaseHttp.cachedRequest(
+                context,
+                "search:" + type + ":" + limit + ":" + keyword,
+                5 * 60_000L,
+                "/api/cloudsearch/pc",
+                data,
+                "eapi",
+                (body) -> {
+                    JSONObject result = body.optJSONObject("result");
+                    if (result == null) return false;
+                    return result.optJSONArray("songs") != null
+                            || result.optJSONArray("artists") != null
+                            || result.optJSONArray("playlists") != null;
+                });
     }
 
     public static JSONObject lyric(Context context, long songId) throws NeteaseHttp.NeteaseException {
-        JSONObject data;
         try {
-            data = new JSONObject()
+            JSONObject data = new JSONObject()
+                    .put("id", songId)
+                    .put("cp", false)
+                    .put("tv", 0).put("lv", 0).put("rv", 0).put("kv", 0)
+                    .put("yv", 0).put("ytv", 0).put("yrv", 0);
+            JSONObject body = NeteaseHttp.cachedRequest(
+                    context,
+                    "lyric-new:" + songId,
+                    DAY,
+                    "/api/song/lyric/v1",
+                    data,
+                    "eapi",
+                    NeteaseClient::hasLyricText);
+            if (hasLyricText(body)) return body;
+        } catch (NeteaseHttp.NeteaseException | JSONException ignored) {
+            // Fall back to the legacy endpoint below.
+        }
+        try {
+            JSONObject data = new JSONObject()
                     .put("id", songId)
                     .put("tv", -1).put("lv", -1).put("rv", -1).put("kv", -1)
                     .put("_nmclfl", 1);
+            return NeteaseHttp.cachedRequest(
+                    context,
+                    "lyric:" + songId,
+                    DAY,
+                    "/api/song/lyric",
+                    data,
+                    "eapi",
+                    NeteaseClient::hasLyricText);
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "lyric build failed");
         }
-        return NeteaseHttp.cachedRequest(context, "lyric:" + songId, DAY, "/api/song/lyric", data, "eapi");
+    }
+
+    private static boolean hasLyricText(JSONObject body) {
+        if (body == null) return false;
+        JSONObject lrc = body.optJSONObject("lrc");
+        JSONObject yrc = body.optJSONObject("yrc");
+        JSONObject tlyric = body.optJSONObject("tlyric");
+        JSONObject ytlrc = body.optJSONObject("ytlrc");
+        return (lrc != null && !lrc.optString("lyric", "").trim().isEmpty())
+                || (yrc != null && !yrc.optString("lyric", "").trim().isEmpty())
+                || (tlyric != null && !tlyric.optString("lyric", "").trim().isEmpty())
+                || (ytlrc != null && !ytlrc.optString("lyric", "").trim().isEmpty());
     }
 
     // ---- Playback ----
@@ -358,6 +443,10 @@ public final class NeteaseClient {
      * lossless/hires/jymaster. body.data[0] carries url/br/level/...
      */
     public static JSONObject songUrlV1(Context context, long songId, String level) throws NeteaseHttp.NeteaseException {
+        long now = System.currentTimeMillis();
+        if (now < urlCooldownUntil) {
+            throw new NeteaseHttp.NeteaseException(429, "网易云请求过于频繁，请稍后再试");
+        }
         JSONObject data;
         try {
             data = new JSONObject()
@@ -367,10 +456,31 @@ public final class NeteaseClient {
         } catch (JSONException error) {
             throw new NeteaseHttp.NeteaseException(500, "songUrlV1 build failed");
         }
-        // CDN urls expire within minutes — a long cache replays dead links
-        // (ExoPlayer "Source error"). Keep resolved urls for 90 seconds only.
-        return NeteaseHttp.cachedRequest(context, "url:" + songId + ":" + level, 90_000L,
-                "/api/song/enhance/player/url/v1", data, "eapi");
+        String userId = String.valueOf(NeteaseSession.userId(context));
+        // Only successful URLs are cached. A null/empty URL must be retried
+        // after login, VIP changes or a transient risk-control response.
+        NeteaseHttp.CacheValidator cacheableUrl = (body) -> {
+            JSONArray dataArray = body.optJSONArray("data");
+            if (dataArray == null || dataArray.length() == 0) return false;
+            JSONObject first = dataArray.optJSONObject(0);
+            return first != null && !first.optString("url", "").isEmpty();
+        };
+        try {
+            return NeteaseHttp.cachedRequest(
+                    context,
+                    "url:" + userId + ":" + songId + ":" + level,
+                    90_000L,
+                    "/api/song/enhance/player/url/v1",
+                    data,
+                    "api",
+                    cacheableUrl);
+        } catch (NeteaseHttp.NeteaseException error) {
+            if (error.code == 405 || error.code == 429 || String.valueOf(error.getMessage()).contains("操作频繁")) {
+                urlCooldownUntil = System.currentTimeMillis() + URL_COOLDOWN_MS;
+                throw new NeteaseHttp.NeteaseException(429, "网易云请求过于频繁，请稍后再试");
+            }
+            throw error;
+        }
     }
 
     public static JSONObject setLike(Context context, long songId, boolean like) throws NeteaseHttp.NeteaseException {
@@ -385,7 +495,9 @@ public final class NeteaseClient {
             throw new NeteaseHttp.NeteaseException(500, "setLike build failed");
         }
         JSONObject body = NeteaseHttp.request(context, "/api/radio/like", data, "weapi");
-        NeteaseHttp.clearCache();
+        // Do not wipe search/lyrics/stream URLs after a like write; only the
+        // playlist metadata is stale.
+        NeteaseHttp.clearCache("playlists");
         return body;
     }
 
@@ -406,7 +518,8 @@ public final class NeteaseClient {
                 throw new NeteaseHttp.NeteaseException(500, "songDetail build failed");
             }
             JSONObject body = NeteaseHttp.cachedRequest(context, "detail-v2:" + c.toString(),
-                    30 * 60_000L, "/api/v3/song/detail", data, "weapi");
+                    30 * 60_000L, "/api/v3/song/detail", data, "weapi",
+                    (result) -> result.optJSONArray("songs") != null);
             JSONArray songs = body.optJSONArray("songs");
             if (songs != null) {
                 for (int i = 0; i < songs.length(); i++) {

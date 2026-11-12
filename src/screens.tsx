@@ -62,7 +62,7 @@ export function TrackRow({
   onLike,
   onRemove,
 }: {
-  track: { id: string; title: string; artist: string; album: string; duration: string; cover: string };
+  track: { id: string; title: string; artist: string; album: string; duration: string; cover: string; vip?: boolean };
   index?: number;
   active?: boolean;
   liked?: boolean;
@@ -85,6 +85,11 @@ export function TrackRow({
           <span className={`flex items-center gap-1.5 truncate text-sm ${active ? "font-semibold text-neutral-950" : "font-medium"}`}>
             {active && <Playing className="size-3.5 shrink-0 text-emerald-600" />}
             <span className="truncate">{track.title}</span>
+            {track.vip && (
+              <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600">
+                VIP
+              </span>
+            )}
           </span>
           <span className="mt-0.5 block truncate text-xs text-neutral-500">
             {track.artist} · {track.album}
@@ -901,10 +906,12 @@ function PlaylistCover({
   tracks?: Track[];
   className?: string;
 }) {
-  const [coverSrc, setCoverSrc] = useState(playlist.coverUrl ?? "");
+  const [coverSrc, setCoverSrc] = useState(() =>
+    /^https?:/i.test(playlist.coverUrl ?? "") ? "" : playlist.coverUrl ?? "",
+  );
   useEffect(() => {
     let mounted = true;
-    setCoverSrc(playlist.coverUrl ?? "");
+    setCoverSrc(/^https?:/i.test(playlist.coverUrl ?? "") ? "" : playlist.coverUrl ?? "");
     if (playlist.coverUrl) {
       void cachedCoverUrl(playlist.coverUrl).then((url) => {
         if (mounted && url) setCoverSrc(url);

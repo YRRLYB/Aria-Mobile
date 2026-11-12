@@ -137,6 +137,7 @@ public class AriaPlaybackService extends MediaSessionService {
     private boolean nextAppendBusy = false;
     private boolean startInFlight = false;
     private final Set<Integer> failedQueuePositions = new HashSet<>();
+    private final Set<Integer> retriedQueuePositions = new HashSet<>();
     private final ExecutorService urlExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "aria-playback-url");
         thread.setDaemon(true);
@@ -298,9 +299,36 @@ public class AriaPlaybackService extends MediaSessionService {
         public void onPlayerError(PlaybackException error) {
             String message = error != null ? String.valueOf(error.getMessage()) : "unknown playback error";
             android.util.Log.w("AriaPlayback", "player error: " + message);
-            if (nativeQueueIndex >= 0) failedQueuePositions.add(nativeQueueIndex);
-            // Expired CDN links are common in direct mode. Skip to the next
-            // playable queue item instead of stranding a background session.
+            int position = nativeQueueIndex;
+            // Expired CDN links are common in direct mode. Refresh the same
+            // item once before skipping; only blacklist it if that fails too.
+            if (position >= 0 && position < nativeQueue.size() && !retriedQueuePositions.contains(position)) {
+                retriedQueuePositions.add(position);
+                QueueEntry entry = nativeQueue.get(position);
+                int generation = queueGeneration;
+                long startMs = Math.max(0, (long) (safePosition() * 1000));
+                entry.resolvedUrl = "";
+                urlExecutor.execute(() -> {
+                    String url = resolveEntryUrl(entry);
+                    mainHandler.post(() -> {
+                        if (generation != queueGeneration || nativeQueueIndex != position) return;
+                        if (!url.isEmpty()) {
+                            entry.resolvedUrl = url;
+                            startEntry(entry, position, startMs, false);
+                            return;
+                        }
+                        failedQueuePositions.add(position);
+                        if (!playNextFromQueue(true)) {
+                            releaseTempForeground();
+                            Map<String, Object> event = baseEvent("error");
+                            event.put("message", message);
+                            emit(event);
+                        }
+                    });
+                });
+                return;
+            }
+            if (position >= 0) failedQueuePositions.add(position);
             if (playNextFromQueue(true)) return;
             releaseTempForeground();
             Map<String, Object> event = baseEvent("error");
@@ -643,6 +671,7 @@ public class AriaPlaybackService extends MediaSessionService {
             nativeRepeatMode = "one".equals(extras.getString("repeatMode", "all")) ? "one" : "all";
             nativeQueue.clear();
             failedQueuePositions.clear();
+            retriedQueuePositions.clear();
             nextAppendBusy = false;
             startInFlight = false;
 

@@ -57,6 +57,10 @@ public final class NeteaseHttp {
         }
     }
 
+    public interface CacheValidator {
+        boolean shouldCache(JSONObject body);
+    }
+
     private NeteaseHttp() {
     }
 
@@ -64,8 +68,30 @@ public final class NeteaseHttp {
         CACHE.clear();
     }
 
+    /** Clears only entries whose key starts with the given prefix. */
+    public static void clearCache(String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            clearCache();
+            return;
+        }
+        CACHE.keySet().removeIf((key) -> key.startsWith(prefix));
+    }
+
     /** Cached request: cacheKey null/empty means do not cache. */
     public static JSONObject cachedRequest(Context context, String cacheKey, long ttlMillis, String uri, JSONObject data, String crypto) throws NeteaseException {
+        return cachedRequest(context, cacheKey, ttlMillis, uri, data, crypto, null);
+    }
+
+    /** Cached request with a predicate so failed/empty payloads are never pinned. */
+    public static JSONObject cachedRequest(
+            Context context,
+            String cacheKey,
+            long ttlMillis,
+            String uri,
+            JSONObject data,
+            String crypto,
+            CacheValidator validator
+    ) throws NeteaseException {
         if (cacheKey != null && !cacheKey.isEmpty()) {
             CacheEntry entry = CACHE.get(cacheKey);
             if (entry != null && entry.expiresAt > System.currentTimeMillis()) {
@@ -73,7 +99,7 @@ public final class NeteaseHttp {
             }
         }
         JSONObject body = request(context, uri, data, crypto);
-        if (cacheKey != null && !cacheKey.isEmpty()) {
+        if (cacheKey != null && !cacheKey.isEmpty() && (validator == null || validator.shouldCache(body))) {
             CACHE.put(cacheKey, new CacheEntry(body, System.currentTimeMillis() + ttlMillis));
         }
         return body;
@@ -127,6 +153,21 @@ public final class NeteaseHttp {
             NeteaseCrypto.EapiParams params = NeteaseCrypto.eapi(uri, data.toString());
             body = "params=" + urlEncode(params.params());
             url = API_DOMAIN + "/eapi" + uri.substring(4);
+        } else if ("api".equals(crypto)) {
+            Map<String, String> header = eapiHeader(cookieMap);
+            headers.put("Cookie", cookieHeader(header));
+            headers.put("User-Agent", UA_API);
+            StringBuilder form = new StringBuilder();
+            Iterator<String> keys = data.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                Object value = data.opt(key);
+                if (value == null) continue;
+                if (form.length() > 0) form.append('&');
+                form.append(urlEncode(key)).append('=').append(urlEncode(String.valueOf(value)));
+            }
+            body = form.toString();
+            url = API_DOMAIN + "/api" + uri.substring(4);
         } else {
             throw new NeteaseException(400, "unknown crypto: " + crypto);
         }
@@ -201,12 +242,20 @@ public final class NeteaseHttp {
                 throw new NeteaseException(status > 100 && status < 600 ? status : 502, "non-JSON response: " + text.substring(0, Math.min(120, text.length())));
             }
             int code = json.optInt("code", status);
-            // The Node layer treats these as success (QR polling 800-803 etc.).
-            if (code == 201 || code == 302 || code == 400 || code == 502 || (code >= 800 && code <= 803)) {
+            // QR polling uses 800–803 and login redirects use 201/302. 400 and
+            // 502 are ordinary upstream failures, not success payloads.
+            if (code == 201 || code == 302 || (code >= 800 && code <= 803)) {
                 return json;
             }
             if (code != 200) {
-                throw new NeteaseException(code, json.optString("message", json.optString("msg", "code " + code)));
+                String message = json.optString("message", json.optString("msg", "code " + code));
+                if (code == 405 || message.contains("操作频繁")) {
+                    throw new NeteaseException(429, "网易云请求过于频繁，请稍后再试");
+                }
+                if (code == -460) {
+                    throw new NeteaseException(code, "网络环境存在风险，请更换网络或稍后重试");
+                }
+                throw new NeteaseException(code, message);
             }
             return json;
         } catch (NeteaseException error) {

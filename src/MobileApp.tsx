@@ -408,8 +408,14 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
   const activeTrack = useMemo(() => {
     if (activeTrackId === idleTrack.id) return idleTrack;
-    return trackById.get(activeTrackId) ?? cachedState.activeTrackSnapshot ?? idleTrack;
-  }, [activeTrackId, trackById, cachedState.activeTrackSnapshot]);
+    const live = trackById.get(activeTrackId);
+    const cachedActive = cachedState.activeTrackSnapshot?.id === activeTrackId
+      ? cachedState.activeTrackSnapshot
+      : undefined;
+    const cachedQueue = cachedState.playQueueSnapshots?.find((track) => track.id === activeTrackId);
+    const candidates = [live, cachedActive, cachedQueue];
+    return candidates.find((track) => Boolean(track?.streamUrl)) ?? live ?? cachedActive ?? cachedQueue ?? idleTrack;
+  }, [activeTrackId, trackById, cachedState.activeTrackSnapshot, cachedState.playQueueSnapshots]);
 
   useEffect(() => {
     getActiveTrackRef.current = () => activeTrack;
@@ -928,7 +934,8 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   }
 
   function toggleLikeTrack(trackId: string) {
-    const track = allTracks.find((item) => item.id === trackId);
+    const track = allTracks.find((item) => item.id === trackId)
+      ?? (activeTrack.id === trackId ? activeTrack : undefined);
     if (track?.source === "netease") {
       toggleNeteaseLike(track);
       return;
@@ -1419,18 +1426,23 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   // ---- History, counts, media session, persistence ----
   const activeTrackStartedRef = useRef<string>("");
   useEffect(() => {
-    if (!activeTrack.streamUrl || activeTrack.id === idleTrack.id) return;
+    if (!playing || !activeTrack.streamUrl || activeTrack.id === idleTrack.id) return;
     if (activeTrackStartedRef.current === activeTrack.id) return;
     activeTrackStartedRef.current = activeTrack.id;
     setPlayHistory((current) => {
       const previous = current[0];
-      const rest = previous?.track.id === activeTrack.id ? current.slice(1) : current;
-      return [{ track: createPlayerCacheSnapshot(activeTrack), playedAt: Date.now(), count: 1 }, ...rest].slice(0, 300);
+      const existing = current.find((entry) => entry.track.id === activeTrack.id);
+      const rest = previous?.track.id === activeTrack.id ? current.slice(1) : current.filter((entry) => entry.track.id !== activeTrack.id);
+      return [{
+        track: createPlayerCacheSnapshot(activeTrack),
+        playedAt: Date.now(),
+        count: (existing?.count ?? 0) + 1,
+      }, ...rest].slice(0, 300);
     });
     setPlayCounts((current) => ({ ...current, [activeTrack.id]: (current[activeTrack.id] ?? 0) + 1 }));
     const warmCandidates = playQueueTracks.slice(0, 12);
     if (warmCandidates.length) void warmNeteaseTrackCache(warmCandidates);
-  }, [activeTrack, playQueueTracks, warmNeteaseTrackCache]);
+  }, [activeTrack, playing, playQueueTracks, warmNeteaseTrackCache]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator) || activeTrack.id === idleTrack.id) return;
@@ -1563,12 +1575,13 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         netease.setNeteaseAccount(settings.neteaseAccount);
       })
       .catch(() => undefined);
-    if (!poolsSeededRef.current) {
+    // Always refresh in the background: cached pools render immediately, and
+    // stale daily/roam data from a previous day must not persist for weeks.
+    const refreshTimer = window.setTimeout(() => {
       initialRefreshRef.current().catch(() => undefined);
-    } else if (!cachedLibrary.likedComplete) {
-      netease.refreshLikedData().catch(() => setPlayNotice("喜欢列表同步失败，可在列表中重试"));
-    }
+    }, 600);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => window.clearTimeout(refreshTimer);
   }, []);
 
   const likedLocalTracks = useMemo(
@@ -1659,7 +1672,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       const rest = current.filter((id) => !visible.has(id));
       return [...trackIds, ...rest];
     }),
-    removeFromQueue: (trackId: string) => setPlayQueueIds((current) => current.filter((id) => id !== trackId)),
+    removeFromQueue: (trackId: string) => {
+      if (trackId === activeTrack.id) return;
+      setPlayQueueIds((current) => current.filter((id) => id !== trackId));
+    },
     playNextInQueue: (trackId: string) => setPlayQueueIds((current) => {
       const without = current.filter((id) => id !== trackId);
       const activeIndex = without.indexOf(activeTrack.id);

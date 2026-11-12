@@ -84,6 +84,7 @@ export function providerTrackToUiTrack(track: ProviderTrack, index: number): Tra
     coverUrl: track.coverUrl ? api.getNeteaseCoverUrl(track.coverUrl) : undefined,
     likedAt: track.likedAt ?? null,
     bpm: null,
+    vip: Boolean(track.vip),
     bitrate: track.bitrate ?? null,
     sampleRate: track.sampleRate ?? null,
     currentLevel: track.currentLevel ?? null,

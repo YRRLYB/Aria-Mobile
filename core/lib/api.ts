@@ -176,6 +176,7 @@ export type ProviderTrack = {
   coverUrl?: string | null;
   likedAt?: number | null;
   bpm?: number | null;
+  vip?: boolean;
   bitrate?: number | null;
   sampleRate?: number | null;
   audioFormat?: string | null;
@@ -425,8 +426,9 @@ export const api = {
     });
   },
   getNeteaseCoverUrl(sourceUrl: string) {
-    if (neteaseDirect()) return sourceUrl;
-    return apiUrl(`/api/providers/netease/cover?url=${encodeURIComponent(sourceUrl)}`);
+    const direct = neteaseDirect();
+    if (direct) return direct.coverUrl(sourceUrl);
+    return apiUrl(`/api/providers/netease/cover?url=${encodeURIComponent(sourceUrl)}&size=480y480`);
   },
   searchLyrics(query: { title: string; artist?: string; album?: string }) {
     if (neteaseDirect()) {

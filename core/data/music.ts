@@ -38,6 +38,7 @@ export type Track = {
   requiresNativePlayback?: boolean;
   offline?: boolean;
   likedAt?: number | null;
+  vip?: boolean;
   currentLevel?: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster" | null;
   availableLevels?: Array<"standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster">;
   cover: string;

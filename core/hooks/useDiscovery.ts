@@ -137,7 +137,7 @@ export function useDiscovery(options: {
     const providerId = selectedArtist.providerId;
     if (providerId) {
       const requestKey = `tracks:${providerId}`;
-      if (!artistRequestRef.current.has(requestKey)) {
+      if (!artistRemoteTracksCacheRef.current.has(artistId) && !artistRequestRef.current.has(requestKey)) {
         artistRequestRef.current.add(requestKey);
         trimStringSet(artistRequestRef, memoryLimits.artistRequest);
         api
@@ -161,6 +161,9 @@ export function useDiscovery(options: {
             }
           })
           .catch(() => {
+            artistRequestRef.current.delete(requestKey);
+          })
+          .finally(() => {
             artistRequestRef.current.delete(requestKey);
           });
       }
@@ -193,6 +196,9 @@ export function useDiscovery(options: {
             );
           })
           .catch(() => {
+            artistRequestRef.current.delete(requestKey);
+          })
+          .finally(() => {
             artistRequestRef.current.delete(requestKey);
           });
       }

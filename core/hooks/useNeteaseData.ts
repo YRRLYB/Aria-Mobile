@@ -1,4 +1,4 @@
-import { useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { Track, ViewId } from "@/data/music";
 import type { NeteaseAccountSummary, ProviderPlaylist } from "@/lib/api";
 import { api } from "@/lib/api";
@@ -38,6 +38,37 @@ export function useNeteaseData(options: {
   const [likedComplete, setLikedComplete] = useState(false);
   const roamBusyRef = useRef(false);
   const neteaseWarmupRef = useRef<Set<string>>(new Set());
+  const playlistRequestRef = useRef(0);
+  const accountKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const nextKey = neteaseAccount?.connected
+      ? `${neteaseAccount.userId ?? ""}|${neteaseAccount.nickname ?? ""}`
+      : null;
+    const previousKey = accountKeyRef.current;
+    accountKeyRef.current = nextKey;
+    if (!previousKey || previousKey === nextKey) return;
+    // Logout or account switch: old private pools must never leak into the
+    // next session. Search/artist caches are also host-account data here.
+    playlistRequestRef.current += 1;
+    neteaseWarmupRef.current.clear();
+    setNeteaseTracks([]);
+    setNeteaseLikedTracks([]);
+    setDailyTracks([]);
+    setRoamTracks([]);
+    setPlaylistTracks([]);
+    setSelectedPlaylist(null);
+    setProviderPlaylists([]);
+    setNeteaseLikedIds({});
+    setLikedComplete(false);
+  }, [neteaseAccount]);
+
+  useEffect(() => {
+    if (selectedPlaylist) return;
+    playlistRequestRef.current += 1;
+    setPlaylistTracks([]);
+    setPlaylistLoading(false);
+  }, [selectedPlaylist]);
 
   function providerIdsForTracks(tracksToRead: Track[]) {
     return tracksToRead
@@ -151,7 +182,9 @@ export function useNeteaseData(options: {
       setNeteaseLikedIds(Object.fromEntries(likedUiTracks.map((track) => [track.id, true])));
       setLikedComplete(true);
     }
-    setNeteaseTracks(trimTrackCache(merged));
+    // Never replace the whole pool: search, artist and playlist tracks that
+    // are not in daily/roam/liked must stay resolvable.
+    setNeteaseTracks((current) => trimTrackCache([...current, ...merged]));
     if (playlists) setProviderPlaylists(playlists.playlists);
     warmNeteaseTrackCache(merged);
     if (options.canAutoSelectFirstTrack && merged[0]) {
@@ -213,17 +246,23 @@ export function useNeteaseData(options: {
   }
 
   async function openPlaylist(playlist: ProviderPlaylist) {
+    const request = playlistRequestRef.current + 1;
+    playlistRequestRef.current = request;
     setSelectedPlaylist(playlist);
     setPlaylistTracks([]);
     setPlaylistLoading(true);
     try {
       const result = await api.getNeteasePlaylistTracks(playlist.id);
+      if (playlistRequestRef.current !== request) return;
       const uiTracks = result.tracks.map((track, index) => providerTrackToUiTrack(track, index));
       setPlaylistTracks(uiTracks);
       setNeteaseTracks((current) => trimTrackCache([...current, ...uiTracks]));
       warmNeteaseTrackCache(uiTracks);
+    } catch (error) {
+      if (playlistRequestRef.current === request) setPlaylistTracks([]);
+      throw error;
     } finally {
-      setPlaylistLoading(false);
+      if (playlistRequestRef.current === request) setPlaylistLoading(false);
     }
   }
 

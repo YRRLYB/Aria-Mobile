@@ -67,11 +67,54 @@ type RawSong = {
   dt?: number;
   duration?: number;
   likedAt?: number;
-  privilege?: { maxbr?: number; pl?: number };
+  fee?: number;
+  privilege?: {
+    maxbr?: number;
+    pl?: number;
+    fee?: number;
+    l?: number;
+    m?: number;
+    h?: number;
+    sq?: number;
+    hr?: number;
+    jymaster?: number;
+  };
 };
+
+const LEVELS = ["standard", "higher", "exhigh", "lossless", "hires", "jymaster"] as const;
+type QualityLevel = (typeof LEVELS)[number];
+
+function qualityLevelsFromSong(song: RawSong): QualityLevel[] {
+  const privilege = song.privilege;
+  const levels: QualityLevel[] = [];
+  if (privilege?.l) levels.push("standard");
+  if (privilege?.m) levels.push("higher");
+  if (privilege?.h) levels.push("exhigh");
+  if (privilege?.sq) levels.push("lossless");
+  if (privilege?.hr) levels.push("hires");
+  if (privilege?.jymaster) levels.push("jymaster");
+  if (levels.length) return levels;
+  const maxbr = privilege?.maxbr ?? 0;
+  return maxbr >= 1_400_000
+    ? ["standard", "higher", "exhigh", "lossless", "hires"]
+    : maxbr >= 999_000
+      ? ["standard", "higher", "exhigh", "lossless"]
+      : ["standard", "higher", "exhigh"];
+}
+
+export function neteaseCoverUrl(sourceUrl: string | null | undefined, size = 480): string | null {
+  if (!sourceUrl) return null;
+  let next = sourceUrl.replace(/^http:/i, "https:");
+  if (/music\.126\.net/i.test(next) && !/[?&]param=/.test(next)) {
+    next += `${next.includes("?") ? "&" : "?"}param=${size}y${size}`;
+  }
+  return next;
+}
 
 function mapSong(song: RawSong): ProviderTrack {
   const maxbr = song.privilege?.maxbr ?? 0;
+  const availableLevels = qualityLevelsFromSong(song);
+  const highest = availableLevels[availableLevels.length - 1];
   return {
     // Raw numeric id — the desktop-shaped mapping (providerTrackToUiTrack)
     // adds the netease: prefix exactly once, like the desktop server does.
@@ -80,20 +123,21 @@ function mapSong(song: RawSong): ProviderTrack {
     artist: (song.ar ?? song.artists ?? song.singers ?? []).map((artist) => artist.name).join(" / "),
     album: song.al?.name ?? song.album?.name ?? "",
     duration: Math.round((song.dt ?? song.duration ?? 0) / 1000),
-    // Display tag from the strongest tier the catalog reports; the real
-    // played level arrives with streamMeta after warm/play.
-    quality: maxbr >= 1400_000 ? "Hi-Res" : maxbr >= 999_000 ? "Lossless" : "320K",
+    quality: highest === "jymaster" || highest === "hires"
+      ? "Hi-Res"
+      : highest === "lossless" ? "Lossless" : "320K",
     source: "netease",
     // Sentinel: resolved against songUrlV1 at playback time (MobileApp).
     streamUrl: `direct:${song.id}`,
-    coverUrl: song.al?.picUrl ?? song.album?.picUrl ?? null,
+    coverUrl: neteaseCoverUrl(song.al?.picUrl ?? song.album?.picUrl, 480),
     likedAt: song.likedAt ?? null,
     bpm: null,
+    vip: (song.fee ?? song.privilege?.fee) === 1,
     bitrate: maxbr || null,
-  sampleRate: null,
+    sampleRate: null,
     audioFormat: null,
     currentLevel: null,
-    availableLevels: maxbr >= 999_000 ? ["standard", "higher", "exhigh", "lossless"] : ["standard", "higher", "exhigh"],
+    availableLevels,
   };
 }
 
@@ -104,7 +148,14 @@ async function invoke<T>(endpoint: string, data?: Record<string, unknown>): Prom
 }
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  const date = new Date();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function numericSongId(trackId: string): number {
+  return Number(trackId.replace(/^(netease:|direct:)+/, ""));
 }
 
 // ---- Provider ----
@@ -165,7 +216,7 @@ export async function directAccount(): Promise<NeteaseAccountSummary> {
       connected: true,
       nickname: refreshed.nickname || null,
       userId: String(refreshed.userId || ""),
-      avatarUrl: refreshed.avatarUrl || null,
+      avatarUrl: neteaseCoverUrl(refreshed.avatarUrl, 240),
       cookiePreview: "本机会话 · 直连",
     };
     writeCachedAccount(account);
@@ -175,7 +226,7 @@ export async function directAccount(): Promise<NeteaseAccountSummary> {
       connected: true,
       nickname: status.nickname || null,
       userId: String(status.userId || ""),
-      avatarUrl: status.avatarUrl || null,
+      avatarUrl: neteaseCoverUrl(status.avatarUrl, 240),
       cookiePreview: "本机会话 · 直连",
     };
     writeCachedAccount(account);
@@ -210,7 +261,7 @@ export async function directQrCheck(key: string): Promise<NeteaseQrCheck> {
     status,
     message: status === "success" ? "登录成功" : status === "scanned" ? "已扫描,确认中" : status === "expired" ? "二维码已过期" : "等待扫描",
     account: result.code === 803
-      ? { connected: true, nickname: result.nickname ?? null, userId: null, avatarUrl: result.avatarUrl ?? null, cookiePreview: "本机会话 · 直连" }
+      ? { connected: true, nickname: result.nickname ?? null, userId: null, avatarUrl: neteaseCoverUrl(result.avatarUrl, 240), cookiePreview: "本机会话 · 直连" }
       : null,
   };
 }
@@ -231,10 +282,11 @@ export async function directCaptchaSent(phone: string, countryCode = "86"): Prom
 
 export function directLogout(): void {
   directActive = false;
+  writeCachedAccount({ connected: false, nickname: null, userId: null, avatarUrl: null, cookiePreview: null });
   void NeteaseDirectPlugin.logout();
 }
 
-const LEVEL_TAIL = ["standard", "higher", "exhigh", "lossless", "hires", "jymaster"] as const;
+const LEVEL_TAIL = LEVELS;
 
 function qualityFromLevel(level: string): ProviderTrack["quality"] {
   if (level === "hires" || level === "jymaster" || level === "jyeffect" || level === "sky") return "Hi-Res";
@@ -253,39 +305,45 @@ export type DirectStreamMeta = {
   availableLevels: NonNullable<ProviderTrack["availableLevels"]>;
 };
 
-const QUALITY_LADDER: Array<"standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster"> = [
-  "standard", "higher", "exhigh", "lossless", "hires", "jymaster",
-];
+const QUALITY_LADDER: QualityLevel[] = [...LEVELS];
+
+async function requestStreamLevel(trackId: string, candidate: QualityLevel): Promise<DirectStreamMeta | null> {
+  const numeric = trackId.replace(/^(netease:|direct:)+/, "");
+  const body = await invoke<{ data?: Array<{ url?: string; br?: number; level?: string; size?: number; sr?: number; type?: string }> }>(
+    "songUrlV1",
+    { id: numeric, level: candidate },
+  );
+  const first = body.data?.[0];
+  if (!first?.url) return null;
+  const resolvedLevel = (first.level ?? candidate) as DirectStreamMeta["currentLevel"];
+  const tailIndex = resolvedLevel ? LEVEL_TAIL.indexOf(resolvedLevel as QualityLevel) : -1;
+  return {
+    url: first.url,
+    bitrate: first.br ?? null,
+    sampleRate: first.sr ?? null,
+    audioFormat: first.type ?? null,
+    size: first.size ?? null,
+    quality: qualityFromLevel(resolvedLevel ?? candidate),
+    currentLevel: resolvedLevel,
+    availableLevels: tailIndex >= 0 ? [...LEVEL_TAIL.slice(0, tailIndex + 1)] : [...LEVEL_TAIL],
+  };
+}
 
 export async function directStreamMeta(
   trackId: string,
-  level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster",
+  level: QualityLevel,
 ): Promise<DirectStreamMeta> {
-  const numeric = trackId.replace(/^(netease:|direct:)+/, "");
-  // VIP accounts get the exact tier; free accounts get null for lossless+ —
-  // walk DOWN the ladder until NetEase actually returns a url.
-  // Always walk every tier below the requested one. Catalog maxbr is often
-  // only the preview bitrate and must not prevent VIP lossless requests.
+  // Walk DOWN the ladder until NetEase actually returns a URL. A single
+  // 405/429 is a global cooldown: do not keep hammering lower tiers.
   const ladder = QUALITY_LADDER.slice(0, QUALITY_LADDER.indexOf(level) + 1).reverse();
   for (const candidate of ladder) {
-    const body = await invoke<{ data?: Array<{ url?: string; br?: number; level?: string; size?: number; sr?: number; type?: string }> }>(
-      "songUrlV1",
-      { id: numeric, level: candidate },
-    );
-    const first = body.data?.[0];
-    if (!first?.url) continue;
-    const resolvedLevel = (first.level ?? candidate) as DirectStreamMeta["currentLevel"];
-    const tailIndex = LEVEL_TAIL.indexOf(resolvedLevel as (typeof LEVEL_TAIL)[number]);
-    return {
-      url: first.url,
-      bitrate: first.br ?? null,
-      sampleRate: first.sr ?? null,
-      audioFormat: first.type ?? null,
-      size: null,
-      quality: qualityFromLevel(resolvedLevel ?? candidate),
-      currentLevel: resolvedLevel,
-      availableLevels: tailIndex >= 0 ? [...LEVEL_TAIL.slice(0, tailIndex + 1)] : ["standard", "higher", "exhigh", "lossless", "hires", "jymaster"],
-    };
+    try {
+      const meta = await requestStreamLevel(trackId, candidate);
+      if (meta) return meta;
+    } catch (error) {
+      const message = String(error);
+      if (/频繁|风险|429|405|rate/i.test(message)) break;
+    }
   }
   return { url: null, bitrate: null, sampleRate: null, audioFormat: null, size: null, quality: "320K", currentLevel: null, availableLevels: ["standard", "higher", "exhigh"] };
 }
@@ -346,7 +404,7 @@ const directProvider = {
           owned,
           creatorName: playlist.creator?.nickname ?? null,
           coverColor: "#c9d3f2",
-          coverUrl: playlist.coverImgUrl ?? null,
+          coverUrl: neteaseCoverUrl(playlist.coverImgUrl, 320),
         };
       }),
     };
@@ -368,7 +426,7 @@ const directProvider = {
       id: String(artist.id),
       name: artist.name,
       source: "netease",
-      avatarUrl: artist.picUrl ?? artist.img1v1Url ?? null,
+      avatarUrl: neteaseCoverUrl(artist.picUrl || artist.img1v1Url, 240),
       trackCount: artist.musicSize ?? null,
       albumCount: artist.albumSize ?? null,
     }));
@@ -394,7 +452,7 @@ const directProvider = {
       owned: false,
       creatorName: playlist.creator?.nickname ?? null,
       coverColor: "#c9d3f2",
-      coverUrl: playlist.coverImgUrl ?? null,
+      coverUrl: neteaseCoverUrl(playlist.coverImgUrl, 320),
     }));
   },
   artistTopSongs: async (artistId: string) => {
@@ -402,32 +460,37 @@ const directProvider = {
     return { tracks: (body.songs ?? []).map((song) => mapSong(song)) };
   },
   lyrics: async (trackId: string) => {
-    const body = await invoke<{ lrc?: { lyric?: string }; tlyric?: { lyric?: string }; yrc?: { lyric?: string } }>("lyric", {
-      id: Number(trackId.replace("netease:", "")),
+    const body = await invoke<{ lrc?: { lyric?: string }; tlyric?: { lyric?: string }; yrc?: { lyric?: string }; ytlrc?: { lyric?: string } }>("lyric", {
+      id: numericSongId(trackId),
     });
     const wordLines = parseYrc(body.yrc?.lyric);
     const lines = wordLines.length ? wordLines : parseLrc(body.lrc?.lyric);
-    return { lyrics: withTranslations(lines, body.tlyric?.lyric) };
+    return { lyrics: withTranslations(lines, body.ytlrc?.lyric ?? body.tlyric?.lyric) };
   },
   streamMeta: (trackId: string, level: "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster") =>
     directStreamMeta(trackId, level),
   setLike: async (trackId: string, liked: boolean) => {
-    await invoke("setLike", { id: Number(trackId.replace("netease:", "")), like: liked });
+    await invoke("setLike", { id: numericSongId(trackId), like: liked });
     return { ok: true, liked };
   },
   warmup: async (trackIds: string[], level: string) => {
     let cached = 0;
+    const target = level as QualityLevel;
     for (const trackId of trackIds) {
       try {
-        await directStreamMeta(trackId, level as "standard" | "higher" | "exhigh" | "lossless" | "hires" | "jymaster");
-        cached += 1;
-      } catch {
-        // single-track warm failures are fine
+        // Warm only the requested tier. Walking the full fallback ladder for
+        // every prefetch row is the fastest way to trigger NetEase 405/-460.
+        const meta = await requestStreamLevel(trackId, target);
+        if (meta?.url) cached += 1;
+      } catch (error) {
+        // Single-track warm failures are fine; a global cooldown means stop
+        // the whole batch instead of hammering the endpoint.
+        if (/频繁|风险|429|405|rate/i.test(String(error))) break;
       }
     }
     return { ok: true, cached };
   },
-  coverUrl: (sourceUrl: string) => sourceUrl,
+  coverUrl: (sourceUrl: string) => neteaseCoverUrl(sourceUrl, 480) ?? sourceUrl,
   account: directAccount,
   qrStart: directQrStart,
   qrCheck: directQrCheck,

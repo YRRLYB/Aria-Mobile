@@ -51,6 +51,15 @@ describe("playerPresentation", () => {
     expect(trimTrackCache([first, second, third], 2).map((track) => track.id)).toEqual(["b", "c"]);
   });
 
+  it("lets a fresh playable copy replace a stale snapshot", () => {
+    const stale = { id: "netease:1", streamUrl: undefined } as Parameters<typeof trimTrackCache>[0][number];
+    const playable = { id: "netease:1", streamUrl: "https://cdn.test/1.flac" } as Parameters<typeof trimTrackCache>[0][number];
+    const metadataOnly = { id: "netease:1", streamUrl: undefined } as Parameters<typeof trimTrackCache>[0][number];
+
+    expect(trimTrackCache([stale, playable])[0]?.streamUrl).toBe("https://cdn.test/1.flac");
+    expect(trimTrackCache([playable, metadataOnly])[0]?.streamUrl).toBe("https://cdn.test/1.flac");
+  });
+
   it("creates compact queue snapshots without losing playback metadata", () => {
     const track = {
       id: "netease:42",

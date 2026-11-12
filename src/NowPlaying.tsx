@@ -997,7 +997,8 @@ function QueueRow({
       <button
         type="button"
         onClick={() => controls.removeFromQueue(track.id)}
-        className="tap-scale flex size-8 shrink-0 items-center justify-center rounded-full text-white/35 transition active:bg-white/10 active:text-rose-300"
+        disabled={active}
+        className="tap-scale flex size-8 shrink-0 items-center justify-center rounded-full text-white/35 transition active:bg-white/10 active:text-rose-300 disabled:opacity-20"
         aria-label="从队列移除"
       >
         <X className="size-4" />
