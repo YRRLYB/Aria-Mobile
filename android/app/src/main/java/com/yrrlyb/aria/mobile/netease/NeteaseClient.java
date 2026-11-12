@@ -459,20 +459,34 @@ public final class NeteaseClient {
         String userId = String.valueOf(NeteaseSession.userId(context));
         // Only successful URLs are cached. A null/empty URL must be retried
         // after login, VIP changes or a transient risk-control response.
-        NeteaseHttp.CacheValidator cacheableUrl = (body) -> {
-            JSONArray dataArray = body.optJSONArray("data");
-            if (dataArray == null || dataArray.length() == 0) return false;
-            JSONObject first = dataArray.optJSONObject(0);
-            return first != null && !first.optString("url", "").isEmpty();
-        };
+        NeteaseHttp.CacheValidator cacheableUrl = NeteaseClient::hasPlayableUrl;
+        String cacheKey = "url:" + userId + ":" + songId + ":" + level;
         try {
-            return NeteaseHttp.cachedRequest(
+            JSONObject primary = NeteaseHttp.cachedRequest(
                     context,
-                    "url:" + userId + ":" + songId + ":" + level,
+                    cacheKey,
                     90_000L,
                     "/api/song/enhance/player/url/v1",
                     data,
                     "api",
+                    cacheableUrl);
+            if (hasPlayableUrl(primary)) return primary;
+        } catch (NeteaseHttp.NeteaseException error) {
+            if (error.code == 405 || error.code == 429 || String.valueOf(error.getMessage()).contains("操作频繁")) {
+                urlCooldownUntil = System.currentTimeMillis() + URL_COOLDOWN_MS;
+                throw new NeteaseHttp.NeteaseException(429, "网易云请求过于频繁，请稍后再试");
+            }
+            // Some networks reject the api channel; keep the old eapi path as
+            // a compatibility fallback.
+        }
+        try {
+            return NeteaseHttp.cachedRequest(
+                    context,
+                    cacheKey,
+                    90_000L,
+                    "/api/song/enhance/player/url/v1",
+                    data,
+                    "eapi",
                     cacheableUrl);
         } catch (NeteaseHttp.NeteaseException error) {
             if (error.code == 405 || error.code == 429 || String.valueOf(error.getMessage()).contains("操作频繁")) {
@@ -481,6 +495,14 @@ public final class NeteaseClient {
             }
             throw error;
         }
+    }
+
+    private static boolean hasPlayableUrl(JSONObject body) {
+        if (body == null) return false;
+        JSONArray dataArray = body.optJSONArray("data");
+        if (dataArray == null || dataArray.length() == 0) return false;
+        JSONObject first = dataArray.optJSONObject(0);
+        return first != null && !first.optString("url", "").isEmpty();
     }
 
     public static JSONObject setLike(Context context, long songId, boolean like) throws NeteaseHttp.NeteaseException {
