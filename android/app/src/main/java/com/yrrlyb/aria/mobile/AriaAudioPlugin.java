@@ -33,32 +33,66 @@ import java.util.Map;
 public class AriaAudioPlugin extends Plugin {
 
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4711;
+    private volatile boolean destroyed = false;
 
     private final AriaPlaybackService.EventSink eventSink = event -> {
-        if (getBridge() == null || getBridge().getActivity() == null) return;
-        getBridge().getActivity().runOnUiThread(() -> {
-            JSObject payload = new JSObject();
-            for (Map.Entry<String, Object> entry : event.entrySet()) {
-                Object value = entry.getValue();
-                if (value instanceof Double) {
-                    payload.put(entry.getKey(), (Double) value);
-                } else if (value instanceof Long) {
-                    payload.put(entry.getKey(), (Long) value);
-                } else if (value instanceof Boolean) {
-                    payload.put(entry.getKey(), (Boolean) value);
-                } else if (value instanceof String) {
-                    payload.put(entry.getKey(), (String) value);
-                } else if (value == null) {
-                    payload.put(entry.getKey(), null);
+        if (getBridge() == null) return;
+        android.app.Activity activity = getBridge().getActivity();
+        if (activity == null || activity.isFinishing() || activity.isDestroyed()) return;
+        activity.runOnUiThread(() -> {
+            try {
+                if (getBridge() == null) return;
+                android.app.Activity current = getBridge().getActivity();
+                if (current == null || current.isFinishing() || current.isDestroyed()) return;
+                JSObject payload = new JSObject();
+                for (Map.Entry<String, Object> entry : event.entrySet()) {
+                    Object value = entry.getValue();
+                    if (value instanceof Double) {
+                        payload.put(entry.getKey(), (Double) value);
+                    } else if (value instanceof Long) {
+                        payload.put(entry.getKey(), (Long) value);
+                    } else if (value instanceof Integer) {
+                        payload.put(entry.getKey(), (Integer) value);
+                    } else if (value instanceof Boolean) {
+                        payload.put(entry.getKey(), (Boolean) value);
+                    } else if (value instanceof String) {
+                        payload.put(entry.getKey(), (String) value);
+                    } else if (value == null) {
+                        payload.put(entry.getKey(), null);
+                    }
                 }
+                notifyListeners("audioEvent", payload);
+            } catch (Throwable error) {
+                // A destroyed WebView bridge must never crash the playback
+                // service main thread.
+                android.util.Log.w("AriaAudio", "unable to deliver audio event", error);
             }
-            notifyListeners("audioEvent", payload);
         });
     };
 
     @Override
     public void load() {
         AriaPlaybackService.setEventSink(eventSink);
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        AriaPlaybackService.setWebVisible(true);
+    }
+
+    @Override
+    protected void handleOnPause() {
+        AriaPlaybackService.setWebVisible(false);
+        super.handleOnPause();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        destroyed = true;
+        AriaPlaybackService.setWebVisible(false);
+        AriaPlaybackService.clearEventSink(eventSink);
+        super.handleOnDestroy();
     }
 
     @PluginMethod
@@ -78,7 +112,10 @@ public class AriaAudioPlugin extends Plugin {
         bundle.putDouble("speed", call.getDouble("speed", 1.0));
         bundle.putInt("equalizerPreset", call.getInt("equalizerPreset", -1));
         bundle.putParcelableArrayList("queue", queueBundles(call));
-        AriaPlaybackService.startWithLoad(getContext(), bundle);
+        if (!AriaPlaybackService.startWithLoad(getContext(), bundle)) {
+            call.reject("无法启动后台播放服务");
+            return;
+        }
         call.resolve();
     }
 
@@ -188,12 +225,15 @@ public class AriaAudioPlugin extends Plugin {
 
     @PluginMethod
     public void getCacheStats(PluginCall call) {
-        call.resolve(toJsObject(AriaPlaybackService.getAudioCacheStats(getContext())));
+        JSObject stats = toJsObject(AriaPlaybackService.getAudioCacheStats(getContext()));
+        if (!destroyed) call.resolve(stats);
     }
 
     @PluginMethod
     public void clearCache(PluginCall call) {
-        AriaPlaybackService.clearAudioCache(getContext(), stats -> call.resolve(toJsObject(stats)));
+        AriaPlaybackService.clearAudioCache(getContext(), stats -> {
+            if (!destroyed) call.resolve(toJsObject(stats));
+        });
     }
 
     @PluginMethod
@@ -211,19 +251,21 @@ public class AriaAudioPlugin extends Plugin {
         state.put("paused", true);
         state.put("trackId", null);
         state.put("requestId", null);
-        AriaPlaybackService.withPlayer(player -> {
-            state.put("active", player.getCurrentMediaItem() != null);
-            state.put("position", player.getCurrentPosition() / 1000.0);
-            long duration = player.getDuration();
-            state.put("duration", duration <= 0 ? 0.0 : duration / 1000.0);
-            state.put("paused", !player.getPlayWhenReady());
-            androidx.media3.common.MediaItem item = player.getCurrentMediaItem();
-            if (item != null && item.mediaMetadata != null && item.mediaMetadata.extras != null) {
-                state.put("trackId", item.mediaMetadata.extras.getString("trackId"));
-                state.put("requestId", item.mediaMetadata.extras.getString("requestId", ""));
+        AriaPlaybackService.withPlayerState(player -> {
+            if (player != null) {
+                state.put("active", player.getCurrentMediaItem() != null);
+                state.put("position", player.getCurrentPosition() / 1000.0);
+                long duration = player.getDuration();
+                state.put("duration", duration <= 0 ? 0.0 : duration / 1000.0);
+                state.put("paused", !player.getPlayWhenReady());
+                androidx.media3.common.MediaItem item = player.getCurrentMediaItem();
+                if (item != null && item.mediaMetadata != null && item.mediaMetadata.extras != null) {
+                    state.put("trackId", item.mediaMetadata.extras.getString("trackId"));
+                    state.put("requestId", item.mediaMetadata.extras.getString("requestId", ""));
+                }
             }
+            if (!destroyed) call.resolve(state);
         });
-        call.resolve(state);
     }
 
     @PluginMethod

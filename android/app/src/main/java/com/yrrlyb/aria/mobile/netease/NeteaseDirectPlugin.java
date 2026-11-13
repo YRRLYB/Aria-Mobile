@@ -19,11 +19,19 @@ import java.util.concurrent.Executors;
 @CapacitorPlugin(name = "NeteaseDirect")
 public class NeteaseDirectPlugin extends Plugin {
 
+    private volatile boolean destroyed = false;
     private final ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "netease-direct");
         thread.setDaemon(true);
         return thread;
     });
+
+    @Override
+    protected void handleOnDestroy() {
+        destroyed = true;
+        try { executor.shutdownNow(); } catch (Throwable ignored) { }
+        super.handleOnDestroy();
+    }
 
     @PluginMethod
     public void status(PluginCall call) {
@@ -38,6 +46,7 @@ public class NeteaseDirectPlugin extends Plugin {
     @PluginMethod
     public void loginQrStart(PluginCall call) {
         executor.execute(() -> {
+            if (destroyed) return;
             try {
                 JSONObject keyBody = NeteaseClient.loginQrKey(getContext());
                 JSONObject data = keyBody.optJSONObject("data");
@@ -47,10 +56,10 @@ public class NeteaseDirectPlugin extends Plugin {
                 result.put("ok", !unikey.isEmpty());
                 result.put("key", unikey);
                 result.put("qrUrl", NeteaseClient.loginQrUrl(getContext(), unikey));
-                call.resolve(result);
+                if (!destroyed) call.resolve(result);
             } catch (Throwable error) {
                 android.util.Log.e("NeteaseDirect", "loginQrStart crashed", error);
-                call.reject("loginQrStart failed", String.valueOf(error.getMessage()));
+                if (!destroyed) call.reject("loginQrStart failed", String.valueOf(error.getMessage()));
             }
         });
     }
@@ -63,6 +72,7 @@ public class NeteaseDirectPlugin extends Plugin {
             return;
         }
         executor.execute(() -> {
+            if (destroyed) return;
             try {
                 NeteaseClient.QrCheckResult result = NeteaseClient.loginQrCheck(getContext(), key);
                 JSObject out = new JSObject();
@@ -75,10 +85,10 @@ public class NeteaseDirectPlugin extends Plugin {
                     out.put("nickname", NeteaseSession.nickname(getContext()));
                     out.put("avatarUrl", NeteaseSession.avatarUrl(getContext()));
                 }
-                call.resolve(out);
+                if (!destroyed) call.resolve(out);
             } catch (Throwable error) {
                 android.util.Log.e("NeteaseDirect", "loginQrCheck crashed", error);
-                call.reject("loginQrCheck failed", String.valueOf(error.getMessage()));
+                if (!destroyed) call.reject("loginQrCheck failed", String.valueOf(error.getMessage()));
             }
         });
     }
@@ -94,6 +104,7 @@ public class NeteaseDirectPlugin extends Plugin {
             return;
         }
         executor.execute(() -> {
+            if (destroyed) return;
             try {
                 JSONObject body = NeteaseClient.loginCellphone(getContext(), phone, password, captcha, countryCode);
                 int code = body.optInt("code", 0);
@@ -110,9 +121,10 @@ public class NeteaseDirectPlugin extends Plugin {
                     result.put("nickname", NeteaseSession.nickname(getContext()));
                     result.put("avatarUrl", NeteaseSession.avatarUrl(getContext()));
                 }
-                call.resolve(result);
+                if (!destroyed) call.resolve(result);
             } catch (Throwable error) {
                 android.util.Log.e("NeteaseDirect", "loginCellphone crashed", error);
+                if (destroyed) return;
                 JSObject result = new JSObject();
                 result.put("ok", false);
                 result.put("code", error instanceof NeteaseHttp.NeteaseException
@@ -132,6 +144,7 @@ public class NeteaseDirectPlugin extends Plugin {
             return;
         }
         executor.execute(() -> {
+            if (destroyed) return;
             try {
                 JSONObject body = NeteaseClient.captchaSent(getContext(), phone, countryCode);
                 int code = body.optInt("code", 0);
@@ -142,9 +155,10 @@ public class NeteaseDirectPlugin extends Plugin {
                 result.put("ok", ok);
                 result.put("code", code);
                 result.put("message", ok ? "验证码已发送" : (message.isEmpty() ? "发送失败(" + code + ")" : message));
-                call.resolve(result);
+                if (!destroyed) call.resolve(result);
             } catch (Throwable error) {
                 android.util.Log.e("NeteaseDirect", "captchaSent crashed", error);
+                if (destroyed) return;
                 JSObject result = new JSObject();
                 result.put("ok", false);
                 result.put("code", error instanceof NeteaseHttp.NeteaseException
@@ -171,22 +185,24 @@ public class NeteaseDirectPlugin extends Plugin {
         String endpoint = call.getString("endpoint", "");
         String dataJson = call.getString("data", "{}");
         executor.execute(() -> {
+            if (destroyed) return;
             try {
                 org.json.JSONObject body = dispatch(endpoint, new org.json.JSONObject(dataJson));
                 android.util.Log.i("NeteaseDirect", endpoint + " ok code=" + body.optInt("code", 0));
                 JSObject result = new JSObject();
                 result.put("ok", true);
                 result.put("data", JSObject.fromJSONObject(body));
-                call.resolve(result);
+                if (!destroyed) call.resolve(result);
             } catch (NeteaseHttp.NeteaseException error) {
                 android.util.Log.w("NeteaseDirect", endpoint + " -> " + error.code + " " + error.getMessage());
+                if (destroyed) return;
                 JSObject result = new JSObject();
                 result.put("ok", false);
                 result.put("code", error.code);
                 result.put("message", String.valueOf(error.getMessage()));
                 call.resolve(result);
             } catch (Exception error) {
-                call.reject(endpoint + " failed", String.valueOf(error.getMessage()));
+                if (!destroyed) call.reject(endpoint + " failed", String.valueOf(error.getMessage()));
             }
         });
     }

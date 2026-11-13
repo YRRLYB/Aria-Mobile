@@ -41,11 +41,19 @@ import java.util.concurrent.Executors;
 public class AriaShellPlugin extends Plugin {
 
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4711;
+    private volatile boolean destroyed = false;
     private final ExecutorService downloadExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "aria-offline-download");
         thread.setDaemon(true);
         return thread;
     });
+
+    @Override
+    protected void handleOnDestroy() {
+        destroyed = true;
+        try { downloadExecutor.shutdownNow(); } catch (Throwable ignored) { }
+        super.handleOnDestroy();
+    }
 
     @PluginMethod
     public void setStatusBarIconsLight(PluginCall call) {
@@ -192,6 +200,7 @@ public class AriaShellPlugin extends Plugin {
         }
         final android.content.Context app = getContext().getApplicationContext();
         downloadExecutor.execute(() -> {
+            if (destroyed) return;
             JSObject result = new JSObject();
             try {
                 File directory = new File(app.getExternalFilesDir(null), "offline");
@@ -213,12 +222,12 @@ public class AriaShellPlugin extends Plugin {
                 result.put("path", target.getAbsolutePath());
                 result.put("fileUrl", Uri.fromFile(target).toString());
                 result.put("size", target.length());
-                call.resolve(result);
+                if (!destroyed) call.resolve(result);
             } catch (Throwable error) {
                 android.util.Log.w("AriaOffline", "download failed", error);
                 result.put("ok", false);
                 result.put("message", error.getMessage() == null ? "下载失败" : error.getMessage());
-                call.resolve(result);
+                if (!destroyed) call.resolve(result);
             }
         });
     }

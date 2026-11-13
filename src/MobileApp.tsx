@@ -1167,7 +1167,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       else void CapacitorApp.exitApp();
     }).then((handleRef) => {
       handle = handleRef;
-    });
+    }).catch(() => undefined);
     return () => {
       handle?.remove();
     };
@@ -1195,7 +1195,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     let cancelled = false;
     const fallback = window.setTimeout(() => {
       if (!cancelled) setNativeStateReady(true);
-    }, 1500);
+    }, 4000);
     void AriaAudio.getState()
       .then((state) => {
         if (cancelled) return;
@@ -1485,7 +1485,9 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     if (!nativeAudio) return;
     const subscription = AriaAudio.addListener("audioEvent", (event) => nativeEventHandlerRef.current(event));
     return () => {
-      void Promise.resolve(subscription).then((handle) => handle.remove());
+      void Promise.resolve(subscription)
+        .then((handle) => handle.remove())
+        .catch(() => undefined);
     };
   }, [nativeAudio]);
 
@@ -1523,7 +1525,7 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     let handle: { remove(): void } | null = null;
     void CapacitorApp.addListener("resume", () => void syncFromNative()).then((handleRef) => {
       handle = handleRef;
-    });
+    }).catch(() => undefined);
     const onVisible = () => {
       if (document.visibilityState === "visible") void syncFromNative();
     };
@@ -1654,19 +1656,26 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
 
   useEffect(() => {
     if (!("mediaSession" in navigator) || activeTrack.id === idleTrack.id) return;
-    const artwork = activeTrack.cover.startsWith("http")
-      ? [{ src: activeTrack.cover, sizes: "512x512", type: "image/jpeg" }]
-      : [];
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: activeTrack.title,
-      artist: activeTrack.artist,
-      album: activeTrack.album,
-      artwork,
-    });
-    navigator.mediaSession.setActionHandler("play", () => setPlaying(true));
-    navigator.mediaSession.setActionHandler("pause", () => setPlaying(false));
-    navigator.mediaSession.setActionHandler("previoustrack", () => playPrevious());
-    navigator.mediaSession.setActionHandler("nexttrack", () => playNext());
+    try {
+      const artwork = activeTrack.cover.startsWith("http")
+        ? [{ src: activeTrack.cover, sizes: "512x512", type: "image/jpeg" }]
+        : [];
+      if (typeof MediaMetadata !== "undefined") {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: activeTrack.title,
+          artist: activeTrack.artist,
+          album: activeTrack.album,
+          artwork,
+        });
+      }
+      navigator.mediaSession.setActionHandler("play", () => setPlaying(true));
+      navigator.mediaSession.setActionHandler("pause", () => setPlaying(false));
+      navigator.mediaSession.setActionHandler("previoustrack", () => playPrevious());
+      navigator.mediaSession.setActionHandler("nexttrack", () => playNext());
+    } catch {
+      // WebView MediaSession support varies; native Media3 already owns the
+      // lock-screen controls on Android.
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrack, playing, shuffleEnabled]);
 

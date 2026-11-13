@@ -88,6 +88,10 @@ public class AriaPlaybackService extends MediaSessionService {
     private static volatile AriaPlaybackService instance;
     private static volatile EventSink eventSink;
     private static volatile boolean requestedUsbExclusive = false;
+    // JS progress events are only useful while the WebView is visible. Emitting
+    // two per second into a frozen/backgrounded renderer for hours can queue
+    // thousands of bridge messages and leave the app unresponsive on return.
+    private static volatile boolean webVisible = false;
 
     private ExoPlayer player;
     private AudioBitrateMeter bitrateMeter = new AudioBitrateMeter();
@@ -345,12 +349,15 @@ public class AriaPlaybackService extends MediaSessionService {
             // This runs from the service, so gapless preparation continues
             // even when the WebView has been frozen in the background.
             maybeAppendNext();
-            Map<String, Object> event = baseEvent("progress");
-            event.put("position", safePosition());
-            event.put("duration", safeDuration());
-            if (activePlayer.getPlaybackState() == Player.STATE_READY) appendAudioFormat(event);
-            emit(event);
-            mainHandler.postDelayed(this, 500);
+            boolean visible = webVisible;
+            if (visible) {
+                Map<String, Object> event = baseEvent("progress");
+                event.put("position", safePosition());
+                event.put("duration", safeDuration());
+                if (activePlayer.getPlaybackState() == Player.STATE_READY) appendAudioFormat(event);
+                emit(event);
+            }
+            mainHandler.postDelayed(this, visible ? 500 : 2000);
         }
     };
 
@@ -467,12 +474,22 @@ public class AriaPlaybackService extends MediaSessionService {
             return START_NOT_STICKY;
         }
         if (ACTION_LOAD.equals(intent.getAction()) && intent.getExtras() != null) {
-            // Promote to foreground right away: rapid LOAD intents must never
-            // depend on the stream actually starting within the system's
-            // foreground-service grace period (miss it and the process is
-            // killed — the "crash when tapping fast" bug).
-            ensureTempForeground();
-            applyLoad(intent.getExtras());
+            try {
+                // Promote to foreground right away: rapid LOAD intents must never
+                // depend on the stream actually starting within the system's
+                // foreground-service grace period (miss it and the process is
+                // killed — the "crash when tapping fast" bug).
+                ensureTempForeground();
+                applyLoad(intent.getExtras());
+            } catch (Throwable error) {
+                // Android 12+ can reject a foreground-service start after a
+                // long background period. Never let that escape the service
+                // main thread and kill the process.
+                android.util.Log.e("AriaPlayback", "unable to apply load", error);
+                releaseTempForeground();
+                stopSelf();
+                return START_NOT_STICKY;
+            }
         }
         super.onStartCommand(intent, flags, startId);
         // If an OEM still kills the process, let Android recreate the service
@@ -564,11 +581,35 @@ public class AriaPlaybackService extends MediaSessionService {
         eventSink = sink;
     }
 
-    static void startWithLoad(Context context, Bundle payload) {
-        Intent intent = new Intent(context, AriaPlaybackService.class);
-        intent.setAction(ACTION_LOAD);
-        intent.putExtras(payload);
-        ContextCompat.startForegroundService(context, intent);
+    /** Only remove the sink that belongs to the plugin being destroyed. */
+    static void clearEventSink(EventSink sink) {
+        if (eventSink == sink) eventSink = null;
+    }
+
+    /**
+     * The WebView is paused/destroyed while the service keeps playing. Stop
+     * streaming high-frequency progress events into a bridge that cannot
+     * consume them; the JS layer calls getState() when it returns.
+     */
+    static void setWebVisible(boolean visible) {
+        webVisible = visible;
+        AriaPlaybackService service = instance;
+        if (service != null && visible) {
+            service.runOnMain(service::restartProgressLoop);
+        }
+    }
+
+    static boolean startWithLoad(Context context, Bundle payload) {
+        try {
+            Intent intent = new Intent(context, AriaPlaybackService.class);
+            intent.setAction(ACTION_LOAD);
+            intent.putExtras(payload);
+            ContextCompat.startForegroundService(context, intent);
+            return true;
+        } catch (Throwable error) {
+            android.util.Log.e("AriaPlayback", "unable to start playback service", error);
+            return false;
+        }
     }
 
     static void withPlayer(PlayerOperation operation) {
@@ -581,6 +622,21 @@ public class AriaPlaybackService extends MediaSessionService {
 
     interface PlayerOperation {
         void run(ExoPlayer player);
+    }
+
+    interface PlayerStateSink {
+        void done(ExoPlayer player);
+    }
+
+    /** Delivers the current player on the main thread, or null when the
+     *  service/player no longer exists. */
+    static void withPlayerState(PlayerStateSink sink) {
+        AriaPlaybackService service = instance;
+        if (service == null) {
+            sink.done(null);
+            return;
+        }
+        service.runOnMain(() -> sink.done(service.player));
     }
 
     static void requestSkip(boolean next) {
@@ -1288,6 +1344,14 @@ public class AriaPlaybackService extends MediaSessionService {
 
     private void emit(Map<String, Object> event) {
         EventSink sink = eventSink;
-        if (sink != null) sink.emit(event);
+        if (sink == null) return;
+        try {
+            sink.emit(event);
+        } catch (Throwable error) {
+            // The WebView/plugin can disappear while a foreground service is
+            // still emitting progress; an exception here used to reach the
+            // service main thread and take the whole process down.
+            android.util.Log.w("AriaPlayback", "event sink failed", error);
+        }
     }
 }

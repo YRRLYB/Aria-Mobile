@@ -212,7 +212,7 @@ public class LockPlayerActivity extends Activity {
     private String formatTime(long ms) { long seconds = ms / 1000; return String.format(java.util.Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60); }
     @Override protected void onStart() { super.onStart(); visible = this; handler.post(update); }
     @Override protected void onStop() { handler.removeCallbacks(update); if (visible == this) visible = null; super.onStop(); }
-    @Override protected void onDestroy() { handler.removeCallbacksAndMessages(null); artworkWorker.shutdownNow(); super.onDestroy(); }
+    @Override protected void onDestroy() { if (visible == this) visible = null; handler.removeCallbacksAndMessages(null); artworkWorker.shutdownNow(); super.onDestroy(); }
 
     private class CoverBackground extends View {
         private Bitmap bitmap; private int shade = 0xff171b25; private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);

@@ -2,23 +2,33 @@ package com.yrrlyb.aria.mobile;
 
 import android.os.Bundle;
 import android.graphics.Color;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebView;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.WebViewListener;
 
 public class MainActivity extends BridgeActivity {
+    private static boolean crashHandlerInstalled = false;
+    private boolean activityResumed = false;
+    private boolean rendererGone = false;
+    private boolean rendererRecoveryStarted = false;
+
     @Override
     protected void attachBaseContext(android.content.Context base) {
         super.attachBaseContext(base);
+        if (crashHandlerInstalled) return;
+        crashHandlerInstalled = true;
+        final android.content.Context appContext = getApplicationContext();
         // Diagnostics: persist any launch crash to
         // Android/data/com.yrrlyb.aria.mobile/files/crash/last-crash.txt
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
             try {
-                java.io.File dir = new java.io.File(getExternalFilesDir(null), "crash");
+                java.io.File dir = new java.io.File(appContext.getExternalFilesDir(null), "crash");
                 dir.mkdirs();
                 java.io.PrintWriter writer = new java.io.PrintWriter(
                         new java.io.FileWriter(new java.io.File(dir, "last-crash.txt"), false));
@@ -37,6 +47,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AriaShellPlugin.class);
         registerPlugin(com.yrrlyb.aria.mobile.netease.NeteaseDirectPlugin.class);
         super.onCreate(savedInstanceState);
+        installRendererRecovery();
+        if (getBridge() == null || getBridge().getWebView() == null) return;
         getBridge().getWebView().setBackgroundColor(Color.rgb(247, 248, 251));
 
         // True immersive layout: pages paint behind the status bar / gesture
@@ -73,12 +85,69 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
+        activityResumed = true;
+        if (rendererGone) {
+            // The old WebView cannot be reused after its renderer is gone.
+            // Rebuild the activity (and a fresh bridge) instead of letting
+            // Android treat the renderer death as an app crash.
+            maybeRecoverRenderer();
+            return;
+        }
         try {
             pushCurrentInsets();
         } catch (Throwable ignored) {
             // never block resume; the inset listener re-pushes later
         }
         scheduleBlankWebViewRecovery();
+    }
+
+    @Override
+    public void onPause() {
+        activityResumed = false;
+        super.onPause();
+    }
+
+    private void installRendererRecovery() {
+        try {
+            if (getBridge() == null) return;
+            getBridge().addWebViewListener(new WebViewListener() {
+                @Override
+                public boolean onRenderProcessGone(WebView webView, RenderProcessGoneDetail detail) {
+                    rendererGone = true;
+                    AriaPlaybackService.setWebVisible(false);
+                    android.util.Log.w("Aria", "WebView renderer gone; scheduling a clean bridge rebuild");
+                    maybeRecoverRenderer();
+                    // Handled: returning false lets the platform kill the
+                    // whole app process, which is the long-background crash.
+                    return true;
+                }
+            });
+        } catch (Throwable error) {
+            android.util.Log.e("Aria", "renderer recovery hook failed", error);
+        }
+    }
+
+    private void maybeRecoverRenderer() {
+        if (!rendererGone || rendererRecoveryStarted || !activityResumed) return;
+        rendererRecoveryStarted = true;
+        final Runnable recovery = () -> {
+            if (isFinishing() || isDestroyed()) return;
+            android.util.Log.w("Aria", "Recreating activity after WebView renderer loss");
+            try {
+                recreate();
+            } catch (Throwable error) {
+                android.util.Log.e("Aria", "activity recreate failed", error);
+                try {
+                    startActivity(new android.content.Intent(this, MainActivity.class)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                    | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                } catch (Throwable ignored) {
+                }
+            }
+        };
+        android.view.View decor = getWindow() != null ? getWindow().getDecorView() : null;
+        if (decor != null) decor.post(recovery);
+        else runOnUiThread(recovery);
     }
 
     private boolean blankRecoveryPending = false;
@@ -90,7 +159,7 @@ public class MainActivity extends BridgeActivity {
      * the React root never became ready (or if the renderer never answers).
      */
     private void scheduleBlankWebViewRecovery() {
-        if (blankRecoveryPending) return;
+        if (blankRecoveryPending || rendererGone || rendererRecoveryStarted) return;
         if (getBridge() == null || getBridge().getWebView() == null) return;
         final WebView webView = getBridge().getWebView();
         blankRecoveryPending = true;
@@ -102,7 +171,10 @@ public class MainActivity extends BridgeActivity {
             android.util.Log.w("Aria", "WebView renderer silent after resume; reloading");
             try { webView.reload(); } catch (Throwable ignored) { }
         };
-        webView.postDelayed(reloadIfSilent, 3000L);
+        // Long background/Doze can freeze the renderer for a few seconds before
+        // it wakes up. Reloading too early turns a healthy session into an
+        // apparent restart, so give it a generous grace period.
+        webView.postDelayed(reloadIfSilent, 6000L);
         webView.postDelayed(() -> {
             if (answered[0]) return;
             try {
@@ -122,7 +194,7 @@ public class MainActivity extends BridgeActivity {
                 blankRecoveryPending = false;
                 try { webView.reload(); } catch (Throwable ignored) { }
             }
-        }, 1400L);
+        }, 3000L);
     }
 
     private void pushCurrentInsets() {
