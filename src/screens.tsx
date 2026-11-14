@@ -133,9 +133,9 @@ export function TrackRow({
 
 function SectionHeader({ title, Icon, action }: { title: string; Icon?: typeof Compass; action?: ReactNode }) {
   return (
-    <div className="mb-2.5 mt-6 flex items-center justify-between first:mt-1">
-      <h2 className="flex items-center gap-2 text-base font-semibold">
-        {Icon && <Icon className="size-4 text-neutral-400" />}
+    <div className="mb-3 mt-6 flex items-center justify-between first:mt-1">
+      <h2 className="flex items-center gap-2 text-[1.05rem] font-bold tracking-tight text-neutral-950">
+        {Icon && <Icon className="size-4 text-neutral-950" />}
         {title}
       </h2>
       {action}
@@ -163,7 +163,7 @@ function HorizontalTrackCard({
       <div className={`overflow-hidden rounded-[0.9rem] shadow-[0_10px_26px_rgba(47,55,76,0.16)] ring-1 ring-black/5 ${active ? "ring-2 ring-neutral-950" : ""}`}>
         <TrackCover track={track} className="aspect-square w-full" />
       </div>
-      <p className="mt-1.5 truncate text-xs font-medium">{track.title}</p>
+      <p className="mt-1.5 truncate text-xs font-semibold text-neutral-900">{track.title}</p>
       <p className="truncate text-[11px] text-neutral-500">{track.artist}</p>
     </button>
   );
@@ -197,54 +197,6 @@ export function RandomPlayButton({ onPlay, count }: { onPlay: () => void; count:
   );
 }
 
-function LikedHero({ tracks, onOpen, onPlayAll, onShuffle }: { tracks: Track[]; onOpen: () => void; onPlayAll: () => void; onShuffle: () => void }) {
-  const first = tracks[0];
-  return (
-    <div className="relative mt-5 overflow-hidden rounded-[1.35rem] border border-white/75 bg-white/70 p-4 shadow-[0_14px_40px_rgba(47,55,76,0.14)] backdrop-blur">
-      <div className="pointer-events-none absolute -right-10 -top-12 size-36 rounded-full bg-rose-300/25 blur-2xl" aria-hidden />
-      <div className="pointer-events-none absolute -bottom-14 -left-8 size-28 rounded-full bg-indigo-300/20 blur-2xl" aria-hidden />
-      <div className="relative flex items-center gap-3.5">
-        <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3.5 text-left">
-          {/* Content cover keeps the rounded-square rule. */}
-          <span className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] shadow-[0_10px_26px_rgba(47,55,76,0.22)] ring-1 ring-black/5">
-            {first ? <TrackCover track={first} priority className="size-full" /> : <Heart className="size-7 text-rose-400" />}
-            <span className="absolute inset-x-0 bottom-0 flex h-4 items-center justify-center bg-rose-500/85 text-[8px] font-semibold tracking-[0.14em] text-white">
-              喜 欢
-            </span>
-          </span>
-          <span className="min-w-0">
-            <span className="block text-[10px] font-semibold uppercase tracking-[0.24em] text-rose-400">我喜欢的音乐</span>
-            <span className="mt-1 block truncate text-lg font-semibold text-neutral-950">{tracks.length} 首歌</span>
-            <span className="mt-0.5 block truncate text-xs text-neutral-500">
-              {tracks.length ? "按收藏时间排序 · 点封面查看全部" : "播放时点红心收藏喜欢的歌"}
-            </span>
-          </span>
-        </button>
-        <div className="flex shrink-0 flex-col items-center gap-1.5">
-          <button
-            type="button"
-            onClick={onPlayAll}
-            disabled={!tracks.length}
-            className="tap-scale flex size-11 items-center justify-center rounded-full bg-neutral-950 text-white shadow-[0_8px_24px_rgba(23,23,23,0.3)] transition active:scale-95 disabled:opacity-40"
-            aria-label="播放我喜欢的音乐"
-          >
-            <Play className="size-5 translate-x-[1px]" />
-          </button>
-          <button
-            type="button"
-            onClick={onShuffle}
-            disabled={!tracks.length}
-            className="tap-scale flex size-8 items-center justify-center rounded-full bg-neutral-950/[0.06] text-neutral-600 transition active:scale-95 disabled:opacity-40"
-            aria-label="随机播放我喜欢的音乐"
-          >
-            <Shuffle className="size-3.5" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function HomeScreen(controls: MobileControls) {
   const { neteaseAccount, dailyTracks, roamTracks, openCollection, chooseTrack } = controls;
   const likedTracks = newestLiked([...controls.likedNeteaseTracks, ...controls.likedLocalTracks]);
@@ -275,32 +227,62 @@ export function HomeScreen(controls: MobileControls) {
           : <span className="flex size-10 items-center justify-center rounded-full bg-white/70 text-neutral-400 shadow-sm"><UserRound className="size-5" /></span>}
       />
 
-      <div className="aria-rise">
-        <LikedHero
-          tracks={likedTracks}
-          onOpen={() => openCollection("liked")}
-          onPlayAll={() => likedTracks[0] && chooseTrack(likedTracks[0].id, likedTracks)}
-          onShuffle={() => controls.playShuffledTracks(likedTracks)}
-        />
+      {/* 我喜欢：玫瑰色调紧凑条，唯一的红色焦点 */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => openCollection("liked")}
+        onKeyDown={(event) => { if (event.key === "Enter") openCollection("liked"); }}
+        className="aria-rise mt-2 flex items-center gap-4 rounded-[1rem] px-2.5 py-3.5 transition active:bg-neutral-950/[0.04]"
+      >
+        <span className="flex size-14 shrink-0 items-center justify-center rounded-[0.9rem] bg-rose-500 text-white shadow-[0_8px_22px_rgba(244,63,94,0.32)]">
+          <Heart className="size-6 fill-current" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-base font-bold text-neutral-950">我喜欢的音乐</span>
+          <span className="block truncate text-xs text-neutral-500">
+            {likedTracks.length} 首 · 按收藏时间排序
+          </span>
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label="播放我喜欢的音乐"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (likedTracks[0]) chooseTrack(likedTracks[0].id, likedTracks);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.stopPropagation();
+              if (likedTracks[0]) chooseTrack(likedTracks[0].id, likedTracks);
+            }
+          }}
+          className="tap-scale flex size-12 shrink-0 items-center justify-center rounded-full bg-neutral-950 text-white"
+        >
+          <Play className="size-5 translate-x-[1px]" />
+        </span>
       </div>
+      <div className="mx-2 mb-1 h-px bg-neutral-950/[0.06]" aria-hidden />
 
-      <div className="aria-rise aria-rise-1 mt-3 grid grid-cols-2 gap-2">
+      {/* 快捷双卡：翡翠/靛蓝两种色调 */}
+      <div className="aria-rise aria-rise-1 mt-1 grid grid-cols-2 gap-2.5">
         <button
           type="button"
           onClick={() => openCollection("history")}
-          className="tap-scale flex min-w-0 flex-col rounded-[1rem] border border-white/75 bg-white/70 p-3 text-left shadow-sm backdrop-blur"
+          className="tap-scale flex min-w-0 flex-col rounded-[1.1rem] border border-neutral-950/[0.07] bg-white p-3.5 text-left"
         >
-          <span className="flex size-8 items-center justify-center rounded-[0.7rem] bg-emerald-50 text-emerald-600">
+          <span className="flex size-8 items-center justify-center rounded-[0.65rem] bg-neutral-950 text-white">
             <History className="size-4" />
           </span>
-          <span className="mt-2 block text-sm font-semibold">最近播放</span>
+          <span className="mt-2.5 block text-sm font-bold text-neutral-950">最近播放</span>
           <span className="mt-0.5 block truncate text-xs text-neutral-500">
             {recentTracks.length ? `${recentTracks.length} 首 · ${recentTracks[0]?.title ?? ""}` : "还没有播放记录"}
           </span>
         </button>
-        <div className="flex min-w-0 flex-col rounded-[1rem] border border-white/75 bg-white/70 p-3 shadow-sm backdrop-blur">
-          <span className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">今日聆听</span>
-          <span className="mt-1 text-lg font-semibold tabular-nums tracking-tight">{weekCount} 首</span>
+        <div className="flex min-w-0 flex-col rounded-[1.1rem] border border-neutral-950/[0.07] bg-white p-3.5">
+          <span className="text-xs font-medium text-neutral-500">今日聆听</span>
+          <span className="mt-1 text-xl font-bold tabular-nums tracking-tight text-neutral-950">{weekCount} <span className="text-sm font-semibold">首</span></span>
           <span className="mt-0.5 block truncate text-xs text-neutral-500">
             本周 · 今日 {todayListening.count} 首
           </span>
@@ -316,13 +298,12 @@ export function HomeScreen(controls: MobileControls) {
             <button onClick={() => openCollection(id)} aria-label={`查看全部${title}`} title={`查看全部${title}`} className="flex size-9 items-center justify-center"><ChevronRight className="size-5" /></button>
           } />
           <div className="no-scrollbar -mx-4 flex items-start gap-3 overflow-x-auto px-4 pb-1">
-            {/* Alternating vertical offset echoes the watch honeycomb rhythm. */}
             {tracks.slice(0, 5).map((track, index) => (
-              <div key={track.id} className={index % 2 === 1 ? "mt-5" : ""}>
+              <div key={track.id} className={index % 2 === 1 ? "mt-4" : ""}>
                 <HorizontalTrackCard track={track} active={controls.activeTrackId === track.id} onPlay={() => chooseTrack(track.id, tracks)} />
               </div>
             ))}
-            <button onClick={() => openCollection(id)} className={`flex w-24 shrink-0 flex-col items-center justify-center gap-1.5 rounded-full bg-white/60 py-4 text-xs text-neutral-500 ${tracks.length % 2 === 1 ? "mt-5" : ""}`}>
+            <button onClick={() => openCollection(id)} className={`flex w-24 shrink-0 flex-col items-center justify-center gap-1.5 rounded-[0.9rem] bg-white/60 py-4 text-xs text-neutral-500 ${tracks.length % 2 === 1 ? "mt-4" : ""}`}>
               <ChevronRight className="size-5" />{tracks.length ? "查看全部" : "加载音乐"}
             </button>
           </div>

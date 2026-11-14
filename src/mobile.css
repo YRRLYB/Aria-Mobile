@@ -157,3 +157,28 @@ body {
   border: 1px solid rgba(23, 23, 23, 0.2);
   box-shadow: 0 2px 8px rgba(23, 23, 23, 0.25);
 }
+
+/* Hero lab: floating covers + animated aurora blobs (composited only). */
+@keyframes aria-float {
+  0%, 100% { transform: translateY(-6px); }
+  50% { transform: translateY(6px); }
+}
+.aria-float-0 { animation: aria-float 5.2s ease-in-out infinite; }
+.aria-float-1 { animation: aria-float 4.4s ease-in-out -0.8s infinite; }
+.aria-float-2 { animation: aria-float 4.8s ease-in-out -1.6s infinite; }
+.aria-float-3 { animation: aria-float 5.6s ease-in-out -2.4s infinite; }
+
+.aria-aurora-blob {
+  filter: blur(34px);
+  animation: aria-aurora-drift 14s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.aria-aurora-blob-2 { animation-duration: 18s; animation-delay: -4s; }
+.aria-aurora-blob-3 { animation-duration: 11s; animation-delay: -7s; }
+@keyframes aria-aurora-drift {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(46px, 30px) scale(1.25); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aria-float-0, .aria-float-1, .aria-float-2, .aria-float-3, .aria-aurora-blob { animation: none; }
+}
