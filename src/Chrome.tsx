@@ -1,4 +1,4 @@
-import { Home, Library, Pause, Play, Search, Settings, SkipBack, SkipForward } from "./icons";
+import { Home, Library, Play, Playing, Search, Settings, SkipBack, SkipForward } from "./icons";
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { idleTrack } from "@/lib/trackMappers";
@@ -78,7 +78,8 @@ export function MiniPlayer(controls: MobileControls) {
         className="tap-scale flex size-9 items-center justify-center rounded-full bg-neutral-950 text-white"
         aria-label={playing ? "暂停" : "播放"}
       >
-        {playing ? <Pause className="size-4" /> : <Play className="size-4 translate-x-[1px]" />}
+        {/* Same animated equalizer as the now-playing center button. */}
+        {playing ? <Playing className="size-4" /> : <Play className="size-4 translate-x-[1px]" />}
       </button>
       <button
         type="button"

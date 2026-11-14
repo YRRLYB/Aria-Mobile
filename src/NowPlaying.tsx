@@ -37,7 +37,6 @@ import {
   type QualityLevel,
 } from "@/lib/playerPresentation";
 import { TrackCover } from "./Chrome";
-import { Kaleidoscope } from "./Kaleidoscope";
 import { LikeHeart } from "./HeartPulse";
 import type { MobileControls } from "./MobileApp";
 import { formatPlaybackQuality } from "./playbackQuality";
@@ -85,7 +84,6 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
     downloadingTrackIds,
     downloadTrack,
     deleteOfflineTrack,
-    kaleidoscopeEnabled,
     openArtist,
     onClose,
     togglePlayback,
@@ -176,36 +174,30 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
       style={{ background: BASE_BG }}
     >
       {/* ---- Immersive background: full-bleed artwork melting into its own
-           dominant color, then to near-black (NetEase-style gradient).
-           With the kaleidoscope look enabled, the artwork becomes a slowly
-           revolving mirrored-wedge pattern instead of the plain image. ---- */}
+           dominant color, then to near-black (NetEase-style gradient) ---- */}
       <div className="absolute inset-0" aria-hidden>
-        {kaleidoscopeEnabled && displayCoverUrl ? (
-          <Kaleidoscope src={displayCoverUrl} playing={playing} className="absolute inset-0 h-full w-full" />
-        ) : (
-          <AnimatePresence>
-            {displayCoverUrl && (
-              <motion.img
-                key={coverUrl}
-                src={displayCoverUrl}
-                alt=""
-                initial={{ opacity: 0 }}
-                animate={{ opacity: view === "lyrics" ? 0.72 : 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.5 }}
-                onError={(event) => {
-                  if (coverUrl && event.currentTarget.src !== coverUrl) {
-                    event.currentTarget.src = coverUrl;
-                  } else {
-                    event.currentTarget.style.display = "none";
-                  }
-                }}
-                className="absolute inset-x-0 top-0 h-[64%] w-full object-cover"
-                draggable={false}
-              />
-            )}
-          </AnimatePresence>
-        )}
+        <AnimatePresence>
+          {displayCoverUrl && (
+            <motion.img
+              key={coverUrl}
+              src={displayCoverUrl}
+              alt=""
+              initial={{ opacity: 0 }}
+              animate={{ opacity: view === "lyrics" ? 0.72 : 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.5 }}
+              onError={(event) => {
+                if (coverUrl && event.currentTarget.src !== coverUrl) {
+                  event.currentTarget.src = coverUrl;
+                } else {
+                  event.currentTarget.style.display = "none";
+                }
+              }}
+              className="absolute inset-x-0 top-0 h-[64%] w-full object-cover"
+              draggable={false}
+            />
+          )}
+        </AnimatePresence>
         {/* dominant tint over the artwork keeps the whole page in one hue.
             Must reach full opacity before the artwork's bottom edge (64%)
             so the image melts into the background without a hard cut. */}

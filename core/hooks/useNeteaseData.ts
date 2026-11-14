@@ -22,6 +22,8 @@ export function useNeteaseData(options: {
   setPlayQueueIds: (updater: (ids: string[]) => string[]) => void;
   initial?: { liked: Track[]; daily: Track[]; roam: Track[]; playlists: ProviderPlaylist[] };
   initialAccount?: NeteaseAccountSummary | null;
+  /** Surfaced to the UI when a like write fails so the revert is not silent. */
+  onLikeFailure?: (message: string) => void;
 }) {
   const { applyTrackUpdate } = options;
   const [neteaseAccount, setNeteaseAccount] = useState<NeteaseAccountSummary | null>(options.initialAccount ?? null);
@@ -268,7 +270,10 @@ export function useNeteaseData(options: {
 
   const toggleNeteaseLike = useEffectEvent((track: Track) => {
     const providerId = track.providerId;
-    if (!providerId) return;
+    if (!providerId) {
+      options.onLikeFailure?.("该歌曲缺少网易云 ID，暂时无法喜欢");
+      return;
+    }
 
     const wasLiked = Boolean(neteaseLikedIds[track.id]);
     const nextLiked = !wasLiked;
@@ -299,7 +304,11 @@ export function useNeteaseData(options: {
       );
     }
 
-    api.setNeteaseLike(providerId, nextLiked).catch(() => {
+    api.setNeteaseLike(providerId, nextLiked).catch((error) => {
+      const reason = typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message?: unknown }).message)
+        : String(error);
+      options.onLikeFailure?.(`喜欢失败：${reason || "网络异常，请稍后重试"}`);
       setNeteaseLikedIds((current) => {
         const next = { ...current };
         if (wasLiked) next[track.id] = true;

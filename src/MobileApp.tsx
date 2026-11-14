@@ -132,8 +132,6 @@ export type MobileControls = {
   libraryMeta: { roots: number; updatedAt: string | null };
   connection: { serverUrl: string; token: string };
   searchQuery: string;
-  kaleidoscopeEnabled: boolean;
-  setKaleidoscopeEnabled: (enabled: boolean) => void;
   chooseTrack: (trackId: string, preferredQueue?: Track[], options?: ChooseTrackOptions) => void;
   playShuffledTracks: (tracks: Track[], playlistId?: string) => void;
   playPlaylist: (playlist: ProviderPlaylist, tracks: Track[]) => void;
@@ -323,10 +321,6 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   });
   const [playHistory, setPlayHistory] = useState<PlayHistoryEntry[]>(readPlayHistory);
   const [searchQuery, setSearchQuery] = useState("");
-  // Kaleidoscope artwork look on the now-playing screen (default on).
-  const [kaleidoscopeEnabled, setKaleidoscopeEnabledState] = useState(() => {
-    try { return localStorage.getItem("aria-kaleidoscope") !== "0"; } catch { return true; }
-  });
   const [deviceTracks, setDeviceTracks] = useState<Track[]>(cachedLibrary.device);
   // Restored queue snapshots are kept as a live fallback pool. Without this,
   // a track that was queued but never played (and whose source playlist is not
@@ -392,6 +386,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     getActiveTrack: () => getActiveTrackRef.current(),
     shuffleEnabled,
     setPlayQueueIds,
+    onLikeFailure: (message) => {
+      setPlayNotice(message);
+      window.setTimeout(() => setPlayNotice(null), 2600);
+    },
   });
   const {
     neteaseAccount,
@@ -1967,11 +1965,6 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       setActiveTab("search");
     },
     setSearchQuery,
-    kaleidoscopeEnabled,
-    setKaleidoscopeEnabled: (enabled: boolean) => {
-      setKaleidoscopeEnabledState(enabled);
-      try { localStorage.setItem("aria-kaleidoscope", enabled ? "1" : "0"); } catch { /* best effort */ }
-    },
     setHifiEnabled: changeHifiPreference,
     setQualityLevel: changeQualityLevel,
     usbExclusive,

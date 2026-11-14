@@ -1,5 +1,6 @@
 package com.yrrlyb.aria.mobile;
 
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.KeyguardManager;
 import android.content.Context;
@@ -15,6 +16,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.*;
+import android.view.animation.LinearInterpolator;
 import android.widget.*;
 import androidx.core.graphics.Insets;
 import androidx.core.graphics.PathParser;
@@ -79,6 +81,7 @@ public class LockPlayerActivity extends Activity {
     private CoverBackground background;
     private TextView title, artist, time, date, lyric, translation, elapsed, total;
     private ImageButton toggle, favorite;
+    private EqBarsDrawable eqBars;
     private SeekBar progress;
     private String artworkKey = "", lyricKey = "", trackKey = "";
     private boolean seeking;
@@ -92,7 +95,13 @@ public class LockPlayerActivity extends Activity {
                 if (item == null) return;
                 title.setText(item.mediaMetadata.title); artist.setText(item.mediaMetadata.artist);
                 boolean playing = player.getPlayWhenReady();
-                toggle.setImageDrawable(new MusicIcon(playing ? "pause" : "play", Color.WHITE));
+                if (playing) {
+                    if (eqBars == null) eqBars = new EqBarsDrawable(Color.WHITE);
+                    toggle.setImageDrawable(eqBars);
+                } else {
+                    if (eqBars != null) { eqBars.stop(); eqBars = null; }
+                    toggle.setImageDrawable(new MusicIcon("play", Color.WHITE));
+                }
                 toggle.setContentDescription(playing ? "暂停" : "播放");
                 long duration = Math.max(0, player.getDuration()), position = Math.max(0, player.getCurrentPosition());
                 progress.setMax((int) (duration / 1000));
@@ -212,7 +221,7 @@ public class LockPlayerActivity extends Activity {
     private String formatTime(long ms) { long seconds = ms / 1000; return String.format(java.util.Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60); }
     @Override protected void onStart() { super.onStart(); visible = this; handler.post(update); }
     @Override protected void onStop() { handler.removeCallbacks(update); if (visible == this) visible = null; super.onStop(); }
-    @Override protected void onDestroy() { if (visible == this) visible = null; handler.removeCallbacksAndMessages(null); artworkWorker.shutdownNow(); super.onDestroy(); }
+    @Override protected void onDestroy() { if (visible == this) visible = null; if (eqBars != null) { eqBars.stop(); eqBars = null; } handler.removeCallbacksAndMessages(null); artworkWorker.shutdownNow(); super.onDestroy(); }
 
     private class CoverBackground extends View {
         private Bitmap bitmap; private int shade = 0xff171b25; private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -240,8 +249,7 @@ public class LockPlayerActivity extends Activity {
         }
     }
     /** Same Lucide paths as the React UI (ISC license). */
-    private static class MusicIcon extends Drawable {
-        private final String kind; private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static class MusicIcon extends Drawable {        private final String kind; private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         MusicIcon(String kind, int color) { this.kind = kind; paint.setColor(color); paint.setStrokeWidth(1.7f); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND); }
         @Override public void draw(Canvas canvas) {
             canvas.save(); Rect b = getBounds(); canvas.translate(b.left, b.top); canvas.scale(b.width() / 24f, b.height() / 24f);
@@ -255,6 +263,55 @@ public class LockPlayerActivity extends Activity {
             }
             paint.setStyle(kind.equals("liked") || kind.equals("play") || kind.equals("pause") ? Paint.Style.FILL : Paint.Style.STROKE);
             canvas.drawPath(PathParser.createPathFromPathData(path), paint); canvas.restore();
+        }
+        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
+        @Override public void setColorFilter(ColorFilter filter) { paint.setColorFilter(filter); }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        @Override public int getIntrinsicWidth() { return 32; }
+        @Override public int getIntrinsicHeight() { return 32; }
+    }
+
+    /**
+     * The playing-state mark shared with the React UI (aria-icons "playing"):
+     * three rounded bars pulsing on a 1.1 s loop with staggered phases. Runs
+     * a cheap ValueAnimator; {@link #stop()} must be called when paused or
+     * the activity dies so nothing keeps invalidating afterwards.
+     */
+    private static final class EqBarsDrawable extends Drawable {
+        private static final float[] SPANS = {8.5f, 14f, 5f};   // bar heights in the 24-unit grid
+        private static final float[] PHASES = {0f, 0.36f, 0.73f}; // the aria-eq animation delays
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final ValueAnimator animator;
+        private float cycle = 0f;
+
+        EqBarsDrawable(int color) {
+            paint.setColor(color);
+            animator = ValueAnimator.ofFloat(0f, 1f);
+            animator.setDuration(1100);
+            animator.setRepeatCount(ValueAnimator.INFINITE);
+            animator.setInterpolator(new LinearInterpolator());
+            animator.addUpdateListener(animation -> {
+                cycle = (float) animation.getAnimatedValue();
+                invalidateSelf();
+            });
+            animator.start();
+        }
+
+        void stop() {
+            if (animator.isRunning()) animator.cancel();
+        }
+
+        @Override public void draw(Canvas canvas) {
+            Rect b = getBounds();
+            float cx = b.exactCenterX(), cy = b.exactCenterY();
+            float barW = b.width() * 0.115f, gap = b.width() * 0.30f;
+            for (int i = 0; i < 3; i++) {
+                // aria-eq: scaleY swings .4 → 1 around each bar's own center.
+                float p = 0.5f + 0.5f * (float) Math.sin((cycle + PHASES[i]) * 2 * Math.PI);
+                float height = (SPANS[i] / 24f) * b.height() * (0.4f + 0.6f * p);
+                float left = cx + (i - 1) * gap - barW / 2;
+                canvas.drawRoundRect(left, cy - height / 2, left + barW, cy + height / 2, barW / 2, barW / 2, paint);
+            }
         }
         @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
         @Override public void setColorFilter(ColorFilter filter) { paint.setColorFilter(filter); }

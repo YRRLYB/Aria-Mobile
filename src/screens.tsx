@@ -50,6 +50,7 @@ import { rememberSearch, newestLiked } from "./libraryStorage";
 import { AriaAudio, isNativeApp, type AudioCacheStats } from "./native/ariaAudio";
 import { DetailHeader, EmptyState, InlineError, LoadingState, PageHeader, SettingsGroup, SettingsRow, Surface, Toggle } from "./ui";
 import { LikeHeart } from "./HeartPulse";
+import { KaleidoscopeCover } from "./Kaleidoscope";
 import { groupTracksByAlbum, formatTotalDuration, type AlbumGroup } from "./libraryView";
 import { ArtistAvatar } from "./ArtistAvatar";
 import { cachedCoverUrl, clearCoverCache, getCoverCacheStats, type CoverCacheStats } from "./coverCache";
@@ -425,10 +426,16 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
 }
 
 function AlbumCard({ album, onOpen }: { album: AlbumGroup; onOpen: () => void }) {
+  const coverSrc = album.coverTrack.coverUrl ?? (/^(https?:|content:)/.test(album.coverTrack.cover) ? album.coverTrack.cover : undefined);
   return (
     <button type="button" onClick={onOpen} className="tap-scale min-w-0 text-left">
       <div className="overflow-hidden rounded-[0.95rem] bg-white/70 shadow-sm">
-        <TrackCover track={album.coverTrack} className="aspect-square w-full" />
+        {/* Kaleidoscope album art (Apple-watch-face style): the plain cover
+            stays underneath until the mandala has been rendered. */}
+        <span className="relative block aspect-square w-full overflow-hidden">
+          <TrackCover track={album.coverTrack} className="absolute inset-0" />
+          {coverSrc && <KaleidoscopeCover src={coverSrc} className="absolute inset-0 h-full w-full" />}
+        </span>
       </div>
       <p className="mt-1.5 truncate text-xs font-semibold">{album.title}</p>
       <p className="mt-0.5 truncate text-[11px] text-neutral-500">{album.artist} · {album.tracks.length} 首</p>
@@ -1415,8 +1422,6 @@ export function SettingsScreen(controls: MobileControls) {
     localTracks,
     refreshNeteaseData,
     disconnect,
-    kaleidoscopeEnabled,
-    setKaleidoscopeEnabled,
   } = controls;
   const [refreshing, setRefreshing] = useState(false);
 
@@ -1461,21 +1466,6 @@ export function SettingsScreen(controls: MobileControls) {
           />
         </SettingsGroup>
       )}
-
-      <SettingsGroup title="播放页" description="正在播放页的视觉样式。">
-        <SettingsRow
-          icon={<Immersive className="size-4" />}
-          title="万花筒背景"
-          description="封面生成旋转对称的动态图案，播放时缓缓转动"
-          right={
-            <Toggle
-              checked={kaleidoscopeEnabled}
-              onChange={() => setKaleidoscopeEnabled(!kaleidoscopeEnabled)}
-              label="万花筒背景"
-            />
-          }
-        />
-      </SettingsGroup>
 
       <CacheSettings controls={controls} />
 
