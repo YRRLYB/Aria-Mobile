@@ -225,17 +225,19 @@ export function DetailHeader({
 }) {
   return (
     <div className="pb-4">
-      <button type="button" onClick={onBack} className="tap-scale mb-3 flex items-center gap-1.5 text-xs font-medium text-neutral-500">
-        <ChevronRight className="size-4 rotate-180" />
-        {backLabel}
-      </button>
-      <div className="flex items-center gap-4 rounded-[1.35rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-        {visual}
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">{label}</p>
-          <h1 className="mt-1 line-clamp-2 text-lg font-semibold leading-snug">{title}</h1>
-          <div className="mt-1 text-xs text-neutral-500">{meta}</div>
-          {actions && <div className="mt-3 flex items-center gap-2">{actions}</div>}
+      <div className="aria-rise">
+        <button type="button" onClick={onBack} className="tap-scale mb-3 flex items-center gap-1.5 text-xs font-medium text-neutral-500">
+          <ChevronRight className="size-4 rotate-180" />
+          {backLabel}
+        </button>
+        <div className="flex items-center gap-4 rounded-[1.35rem] border border-white/75 bg-white/62 p-4 shadow-sm">
+          {visual}
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">{label}</p>
+            <h1 className="mt-1 line-clamp-2 text-lg font-semibold leading-snug">{title}</h1>
+            <div className="mt-1 text-xs text-neutral-500">{meta}</div>
+            {actions && <div className="mt-3 flex items-center gap-2">{actions}</div>}
+          </div>
         </div>
       </div>
     </div>

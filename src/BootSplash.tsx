@@ -68,6 +68,14 @@ export function BootSplash() {
     return () => window.clearTimeout(timer);
   }, [phase]);
 
+  // Hard failsafe: whatever happens above (timers throttled in the
+  // background, an exception in the canvas path), the splash must never
+  // trap the app behind it.
+  useEffect(() => {
+    const failsafe = window.setTimeout(() => setGone(true), 6500);
+    return () => window.clearTimeout(failsafe);
+  }, []);
+
   // Tap anywhere skips straight to the fade-out.
   useEffect(() => {
     if (phase === "fade") return;
@@ -86,8 +94,10 @@ export function BootSplash() {
     if (!ctx) return;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const cssWidth = canvas.clientWidth;
-    const cssHeight = canvas.clientHeight;
+    // The canvas may be measured before layout on slow WebViews - fall back
+    // to the stage proportions instead of drawing on a zero-sized surface.
+    const cssWidth = canvas.clientWidth || 440;
+    const cssHeight = canvas.clientHeight || Math.round((cssWidth * 208) / 539);
     canvas.width = Math.round(cssWidth * dpr);
     canvas.height = Math.round(cssHeight * dpr);
     ctx.scale(dpr, dpr);
@@ -97,62 +107,68 @@ export function BootSplash() {
     const font = `700 ${92 * scale}px Menlo, "SF Mono", ui-monospace, monospace`;
     const N = WORD.length;
     let raf = 0;
+    let lastDraw = 0;
     // One absolute timeline across phase switches, so the letter exit that
     // plays during the logo phase keeps its original clock.
     if (!startRef.current) startRef.current = performance.now();
 
     const draw = (now: number) => {
-      const t = (now - startRef.current) / 1000;
-      ctx.clearRect(0, 0, cssWidth, cssHeight);
-      ctx.font = font;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const cw = ctx.measureText("M").width + 16 * scale;
-      const x0 = cssWidth / 2 - (cw * (N - 1)) / 2;
-      const y = cssHeight / 2 - 8 * scale;
-      const step = Math.floor(t / SWAP_EVERY);
-      for (let i = 0; i < N; i++) {
-        const exitStart = HANDOFF + (N - 1 - i) * EXIT_STAGGER;
-        const exitP = P(t, exitStart, exitStart + EXIT_SPAN);
-        const gone = exitP >= 1;
-        const tl = lockAt(i);
-        const locked = t >= tl;
-        const age = t - tl;
-        let glyph: string | undefined;
-        let color = "";
-        let alpha = 1;
-        let glyphScale = 1;
-        if (locked && !gone) {
-          glyph = WORD[i];
-          color = age < 0.22 ? COLOR_ACCENT : COLOR_INK;
-          glyphScale = 1 + 0.2 * Math.exp(-age * 14);
-        } else if (!gone) {
-          glyph = GLYPHS[Math.floor(H01(step * 131 + i * 977) * GLYPHS.length)];
-          color = COLOR_PENDING;
-          alpha = 0.75;
+      raf = window.requestAnimationFrame(draw);
+      if (now - lastDraw < 33) return; // ~30 fps is plenty for this look
+      lastDraw = now;
+      try {
+        const t = (now - startRef.current) / 1000;
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+        ctx.font = font;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const cw = ctx.measureText("M").width + 16 * scale;
+        const x0 = cssWidth / 2 - (cw * (N - 1)) / 2;
+        const y = cssHeight / 2 - 8 * scale;
+        const step = Math.floor(t / SWAP_EVERY);
+        for (let i = 0; i < N; i++) {
+          const exitStart = HANDOFF + (N - 1 - i) * EXIT_STAGGER;
+          const exitP = P(t, exitStart, exitStart + EXIT_SPAN);
+          const gone = exitP >= 1;
+          const tl = lockAt(i);
+          const locked = t >= tl;
+          const age = t - tl;
+          let glyph: string | undefined;
+          let color = "";
+          let alpha = 1;
+          let glyphScale = 1;
+          if (locked && !gone) {
+            glyph = WORD[i];
+            color = age < 0.22 ? COLOR_ACCENT : COLOR_INK;
+            glyphScale = 1 + 0.2 * Math.exp(-age * 14);
+          } else if (!gone) {
+            glyph = GLYPHS[Math.floor(H01(step * 131 + i * 977) * GLYPHS.length)];
+            color = COLOR_PENDING;
+            alpha = 0.75;
+          }
+          if (!gone && glyph) {
+            ctx.save();
+            ctx.translate(x0 + i * cw, y);
+            ctx.scale(glyphScale, glyphScale);
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = color;
+            ctx.fillText(glyph, 0, 0);
+            ctx.restore();
+          }
+          // Slot bar: ink when locked, amber for the next one to lock, light
+          // neutral otherwise — and it leaves with its letter.
+          if (!gone) {
+            const next = !locked && t < tl && (i === 0 || t >= lockAt(i - 1));
+            ctx.globalAlpha = 1 - exitP;
+            ctx.fillStyle = locked ? COLOR_INK : next ? COLOR_ACCENT : COLOR_BAR_IDLE;
+            roundRectPath(ctx, x0 + i * cw - cw / 2 + 8 * scale, y + 58 * scale, cw - 16 * scale, 8 * scale, 4 * scale);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
         }
-        if (!gone && glyph) {
-          ctx.save();
-          ctx.translate(x0 + i * cw, y);
-          ctx.scale(glyphScale, glyphScale);
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle = color;
-          ctx.fillText(glyph, 0, 0);
-          ctx.restore();
-        }
-        // Slot bar: ink when locked, amber for the next one to lock, light
-        // neutral otherwise — and it leaves with its letter.
-        if (!gone) {
-          const next = !locked && t < tl && (i === 0 || t >= lockAt(i - 1));
-          ctx.globalAlpha = 1 - exitP;
-          ctx.fillStyle = locked ? COLOR_INK : next ? COLOR_ACCENT : COLOR_BAR_IDLE;
-          roundRectPath(ctx, x0 + i * cw - cw / 2 + 8 * scale, y + 58 * scale, cw - 16 * scale, 8 * scale, 4 * scale);
-          ctx.fill();
-          ctx.globalAlpha = 1;
-        }
-      }
-      if (phaseRef.current === "scramble" || phaseRef.current === "logo") {
-        raf = window.requestAnimationFrame(draw);
+      } catch {
+        // Any drawing hiccup must never take the app down: stop animating.
+        window.cancelAnimationFrame(raf);
       }
     };
     raf = window.requestAnimationFrame(draw);

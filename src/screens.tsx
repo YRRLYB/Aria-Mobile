@@ -266,14 +266,16 @@ export function HomeScreen(controls: MobileControls) {
           : <span className="flex size-10 items-center justify-center rounded-full bg-white/70 text-neutral-400 shadow-sm"><UserRound className="size-5" /></span>}
       />
 
-      <LikedHero
-        tracks={likedTracks}
-        onOpen={() => openCollection("liked")}
-        onPlayAll={() => likedTracks[0] && chooseTrack(likedTracks[0].id, likedTracks)}
-        onShuffle={() => controls.playShuffledTracks(likedTracks)}
-      />
+      <div className="aria-rise">
+        <LikedHero
+          tracks={likedTracks}
+          onOpen={() => openCollection("liked")}
+          onPlayAll={() => likedTracks[0] && chooseTrack(likedTracks[0].id, likedTracks)}
+          onShuffle={() => controls.playShuffledTracks(likedTracks)}
+        />
+      </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="aria-rise aria-rise-1 mt-3 grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={() => openCollection("history")}
@@ -300,7 +302,7 @@ export function HomeScreen(controls: MobileControls) {
         { id: "daily" as const, title: "每日推荐", tracks: dailyTracks, Icon: Compass },
         { id: "roam" as const, title: "私人漫游", tracks: roamTracks, Icon: Radar },
       ]).map(({ id, title, tracks, Icon }) => (
-        <section key={id}>
+        <section key={id} className="aria-rise aria-rise-2">
           <SectionHeader title={title} Icon={Icon} action={
             <button onClick={() => openCollection(id)} aria-label={`查看全部${title}`} title={`查看全部${title}`} className="flex size-9 items-center justify-center"><ChevronRight className="size-5" /></button>
           } />
@@ -1440,7 +1442,7 @@ function SearchGroup({
   children: ReactNode;
 }) {
   return (
-    <section className="mt-5">
+    <section className="aria-rise mt-5">
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold">
           {title} <span className="ml-1 text-xs font-normal text-neutral-400">{count}</span>

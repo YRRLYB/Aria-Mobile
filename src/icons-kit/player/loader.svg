@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+<style>@keyframes aria-spin{to{transform:rotate(360deg)}}.aria-spin{transform-origin:12px 12px;animation:aria-spin .9s linear infinite}@media (prefers-reduced-motion:reduce){.aria-spin{animation-duration:2.4s}}</style>
+<g class="aria-spin"><path d="M12 4A8 8 0 1 1 4.48 14.74"/><circle cx="4.48" cy="14.74" r="2.25" stroke="none" style="fill:var(--aria-dot,currentColor)"/></g>
+</svg>

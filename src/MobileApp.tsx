@@ -1986,16 +1986,26 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
       <audio ref={audioRef} preload="metadata" className="hidden" />
 
       {(["home", "library", "search", "settings"] as TabId[]).map((tab) => (
-        <div key={tab} hidden={activeTab !== tab || Boolean(collection)} className="safe-top no-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-2 pt-3">
+        <div
+          key={tab}
+          hidden={activeTab !== tab || Boolean(collection)}
+          data-active={activeTab === tab && !collection ? "true" : "false"}
+          className="tab-page safe-top no-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-2 pt-3"
+        >
           {tab === "home" && <HomeScreen {...controls} />}
           {tab === "library" && <LibraryScreen {...controls} />}
           {tab === "search" && <SearchScreen {...controls} />}
           {tab === "settings" && activeTab === "settings" && <SettingsScreen {...controls} />}
         </div>
       ))}
-      {collection && <div className="safe-top no-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-3">
+      {collection && <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        className="safe-top no-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-3"
+      >
         <CollectionScreen key={collection} collection={collection} controls={controls} onBack={() => setCollection(null)} />
-      </div>}
+      </motion.div>}
 
       <MiniPlayer {...controls} />
       <TabBar activeTab={activeTab} onSelect={(tab) => { setCollection(null); setActiveTab(tab); }} />

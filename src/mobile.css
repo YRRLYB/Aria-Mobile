@@ -77,6 +77,37 @@ body {
   .aria-kaleido-spin { animation: none; }
 }
 
+/* Tab pages re-enter with a short lift whenever they become active. The
+   animation-name only applies while [data-active="true"], so switching tabs
+   restarts it - composited transform/opacity only. */
+@keyframes aria-tab-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tab-page[data-active="true"] {
+  animation: aria-tab-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* List rows / cards slide in once when their container mounts. */
+@keyframes aria-rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.aria-rise {
+  animation: aria-rise-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.aria-rise-1 { animation-delay: 0.04s; }
+.aria-rise-2 { animation-delay: 0.08s; }
+.aria-rise-3 { animation-delay: 0.12s; }
+.aria-rise-4 { animation-delay: 0.16s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-page[data-active="true"],
+  .aria-rise {
+    animation: none;
+  }
+}
+
 /* Lyrics scrolling */
 .lyric-line-active {
   color: rgb(23 23 23);
