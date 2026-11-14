@@ -476,13 +476,13 @@ function AlbumSection({ albums, onOpen }: { albums: AlbumGroup[]; onOpen: (key: 
   );
 }
 
-export function AlbumDetail({ album, controls, onBack }: { album: AlbumGroup; controls: MobileControls; onBack: () => void }) {
+export function AlbumDetail({ album, controls, onBack, backLabel = "返回专辑" }: { album: AlbumGroup; controls: MobileControls; onBack: () => void; backLabel?: string }) {
   const cover = album.coverTrack;
   return (
     <div className="pb-4">
       <button type="button" onClick={onBack} className="tap-scale mb-3 flex items-center gap-1.5 text-xs font-medium text-neutral-500">
         <ChevronRight className="size-4 rotate-180" />
-        返回专辑
+        {backLabel}
       </button>
       <div className="flex items-center gap-4 rounded-[1.35rem] border border-white/75 bg-white/62 p-4 shadow-sm">
         <div className="size-32 shrink-0 overflow-hidden rounded-[1.1rem] shadow-sm">
@@ -665,8 +665,12 @@ export function ArtistDetail({
   onBack: () => void;
 }) {
   const [showAllSongs, setShowAllSongs] = useState(false);
+  const [openedAlbum, setOpenedAlbum] = useState<AlbumGroup | null>(null);
   const albums = useMemo(() => groupTracksByAlbum(tracks), [tracks]);
   const visibleTracks = showAllSongs ? tracks : tracks.slice(0, 5);
+  if (openedAlbum) {
+    return <AlbumDetail album={openedAlbum} controls={controls} backLabel="返回歌手" onBack={() => setOpenedAlbum(null)} />;
+  }
   return (
     <div className="pb-4">
       <button type="button" onClick={onBack} className="tap-scale mb-3 flex items-center gap-1.5 text-xs font-medium text-neutral-500">
@@ -714,10 +718,7 @@ export function ArtistDetail({
           <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
             {albums.map((album) => (
               <div key={album.key} className="w-36 shrink-0">
-                <AlbumCard
-                  album={album}
-                  onOpen={() => album.tracks[0] && controls.chooseTrack(album.tracks[0].id, album.tracks)}
-                />
+                <AlbumCard album={album} onOpen={() => setOpenedAlbum(album)} />
               </div>
             ))}
           </div>
@@ -1103,6 +1104,7 @@ export function SearchScreen(controls: MobileControls) {
   const [expanded, setExpanded] = useState({ artists: false, playlists: false, tracks: false, albums: false });
   const [openedPlaylist, setOpenedPlaylist] = useState<ProviderPlaylist | null>(null);
   const [playlistError, setPlaylistError] = useState("");
+  const [openedAlbum, setOpenedAlbum] = useState<AlbumGroup | null>(null);
   // The input keeps a local draft; results only refresh when the user
   // commits a search (Enter key, the search button, or a history chip), so
   // typing one character no longer reshuffles the list mid-word.
@@ -1150,6 +1152,10 @@ export function SearchScreen(controls: MobileControls) {
   useEffect(() => {
     setExpanded({ artists: false, playlists: false, tracks: false, albums: false });
   }, [searchQuery]);
+
+  if (openedAlbum) {
+    return <AlbumDetail album={openedAlbum} controls={controls} backLabel="返回搜索" onBack={() => setOpenedAlbum(null)} />;
+  }
 
   if (openedPlaylist) {
     return (
@@ -1327,11 +1333,7 @@ export function SearchScreen(controls: MobileControls) {
             >
               <div className="grid grid-cols-2 gap-3">
                 {(expanded.albums ? albumResults : albumResults.slice(0, 4)).map((album) => (
-                  <AlbumCard
-                    key={album.key}
-                    album={album}
-                    onOpen={() => album.tracks[0] && chooseTrack(album.tracks[0].id, album.tracks)}
-                  />
+                  <AlbumCard key={album.key} album={album} onOpen={() => setOpenedAlbum(album)} />
                 ))}
               </div>
             </SearchGroup>

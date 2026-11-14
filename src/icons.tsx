@@ -456,6 +456,15 @@ export function Check(props: AriaIconProps) {
   );
 }
 
+export function Copy(props: AriaIconProps) {
+  return (
+    <LineIcon {...props}>
+      <rect x="9" y="9" width="11" height="11" rx="2.2" />
+      <path d="M5.5 14.5H5a1.8 1.8 0 0 1-1.8-1.8V5A1.8 1.8 0 0 1 5 3.2h7.7A1.8 1.8 0 0 1 14.5 5v.5" />
+    </LineIcon>
+  );
+}
+
 export function X(props: AriaIconProps) {
   return (
     <LineIcon {...props}>

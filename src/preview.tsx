@@ -273,6 +273,7 @@ const controls = {
   refreshNeteaseData: async () => undefined,
   refreshRoamData: async () => undefined,
   setSelectedArtist: noop,
+  openArtist: noop,
   setSearchQuery: noop,
   setKaleidoscopeEnabled: noop,
   setHifiEnabled: noop,

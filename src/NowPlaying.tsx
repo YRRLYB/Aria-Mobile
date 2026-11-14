@@ -5,7 +5,9 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
+  Copy,
   Download,
   GripVertical,
   ListMusic,
@@ -19,6 +21,7 @@ import {
   SkipForward,
   SlidersHorizontal,
   Timer,
+  UserRound,
   Volume,
   VolumeLow,
   VolumeMute,
@@ -83,6 +86,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
     downloadTrack,
     deleteOfflineTrack,
     kaleidoscopeEnabled,
+    openArtist,
     onClose,
     togglePlayback,
     playNext,
@@ -99,6 +103,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
   const [view, setView] = useState<NowPlayingView>("cover");
   const [qualityOpen, setQualityOpen] = useState(false);
   const [sleepOpen, setSleepOpen] = useState(false);
+  const [artistOpen, setArtistOpen] = useState(false);
   const [palette, setPalette] = useState<CoverPalette | null>(null);
   const isIdle = activeTrack.id === idleTrack.id;
   const liked = activeTrack.source === "netease"
@@ -316,7 +321,16 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
             <div className="flex items-end justify-between gap-4">
               <div className="min-w-0">
                 <h2 className="truncate text-[1.35rem] font-semibold leading-snug">{activeTrack.title}</h2>
-                <p className="mt-1 truncate text-sm text-white/55">{activeTrack.artist}</p>
+                <button
+                  type="button"
+                  onClick={() => setArtistOpen(true)}
+                  disabled={isIdle}
+                  className="tap-scale mt-1 flex min-w-0 max-w-full items-center gap-1 text-sm text-white/55 transition active:text-white/80 disabled:opacity-40"
+                  aria-label="歌手操作"
+                >
+                  <span className="truncate">{activeTrack.artist}</span>
+                  <ChevronRight className="size-3.5 shrink-0 text-white/35" />
+                </button>
               </div>
               <div className="shrink-0">
                 <LikeHeart
@@ -489,6 +503,120 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
           />
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {artistOpen && (
+          <ArtistActionsSheet
+            name={activeTrack.artist}
+            onOpenArtist={() => openArtist(activeTrack.artist)}
+            onClose={() => setArtistOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+/** Copy text on the http-scheme WebView: async Clipboard API when present,
+    textarea + execCommand as the legacy fallback. */
+async function copyPlainText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the legacy path.
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+function ArtistActionsSheet({
+  name,
+  onOpenArtist,
+  onClose,
+}: {
+  name: string;
+  onOpenArtist: () => void;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    const ok = await copyPlainText(name);
+    if (ok) {
+      setCopied(true);
+      window.setTimeout(onClose, 750);
+    }
+  }
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.16, ease: "easeOut" }}
+      className="fixed inset-0 z-20 bg-black/20"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: "12%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "12%" }}
+        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        onClick={(event) => event.stopPropagation()}
+        className="safe-bottom absolute inset-x-0 bottom-0 rounded-t-[1.35rem] border-t border-white/10 bg-[#0c0c0f]/97 px-4 pb-6 pt-4 text-white backdrop-blur-xl"
+      >
+        <div className="flex items-center justify-between pb-2">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">歌手</p>
+            <p className="truncate text-sm font-semibold">{name}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="tap-scale flex size-8 items-center justify-center rounded-full text-white/45 transition active:bg-white/10"
+            aria-label="关闭"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="mt-1 space-y-1">
+          <button
+            type="button"
+            onClick={() => void copy()}
+            disabled={copied}
+            className="tap-scale flex w-full items-center gap-3 rounded-[0.9rem] px-2 py-3 text-left transition active:bg-white/10 disabled:opacity-60"
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/[0.07] text-white/70">
+              {copied ? <Check className="size-4 text-emerald-400" /> : <Copy className="size-4" />}
+            </span>
+            <span className="text-sm">{copied ? "已复制" : "复制歌手名字"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenArtist();
+            }}
+            className="tap-scale flex w-full items-center gap-3 rounded-[0.9rem] px-2 py-3 text-left transition active:bg-white/10"
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/[0.07] text-white/70">
+              <UserRound className="size-4" />
+            </span>
+            <span className="text-sm">打开歌手主页</span>
+          </button>
+        </div>
+      </motion.div>
     </motion.div>
   );
 }

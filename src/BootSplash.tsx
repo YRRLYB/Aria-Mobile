@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { H01, MOTION_COLORS, P } from "./motion";
+import { H01, P } from "./motion";
 import bootLogo from "../assets/icon-only.png";
 
 // Cold-start splash built on Motion Prompt #129 "Text scramble": random
@@ -33,6 +33,14 @@ function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: n
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
+
+// Palette follows the app's own design language (ink on the light shell
+// gradient, amber as the single accent) instead of the kit's dark stage.
+const SPLASH_BG = "linear-gradient(170deg, #f7f8fb 0%, #eef1fa 60%, #f4eef8 100%)";
+const COLOR_INK = "#171717";
+const COLOR_PENDING = "#9ca3af";
+const COLOR_ACCENT = "#f59e0b";
+const COLOR_BAR_IDLE = "#dcdfea";
 
 type Phase = "scramble" | "logo" | "fade";
 
@@ -116,11 +124,11 @@ export function BootSplash() {
         let glyphScale = 1;
         if (locked && !gone) {
           glyph = WORD[i];
-          color = age < 0.22 ? MOTION_COLORS.yel : "#FFFFFF";
+          color = age < 0.22 ? COLOR_ACCENT : COLOR_INK;
           glyphScale = 1 + 0.2 * Math.exp(-age * 14);
         } else if (!gone) {
           glyph = GLYPHS[Math.floor(H01(step * 131 + i * 977) * GLYPHS.length)];
-          color = MOTION_COLORS.mint;
+          color = COLOR_PENDING;
           alpha = 0.75;
         }
         if (!gone && glyph) {
@@ -132,12 +140,12 @@ export function BootSplash() {
           ctx.fillText(glyph, 0, 0);
           ctx.restore();
         }
-        // Slot bar: blue when locked, yellow for the next one to lock,
-        // deep navy otherwise — and it leaves with its letter.
+        // Slot bar: ink when locked, amber for the next one to lock, light
+        // neutral otherwise — and it leaves with its letter.
         if (!gone) {
           const next = !locked && t < tl && (i === 0 || t >= lockAt(i - 1));
           ctx.globalAlpha = 1 - exitP;
-          ctx.fillStyle = locked ? MOTION_COLORS.blue : next ? MOTION_COLORS.yel : MOTION_COLORS.navy3;
+          ctx.fillStyle = locked ? COLOR_INK : next ? COLOR_ACCENT : COLOR_BAR_IDLE;
           roundRectPath(ctx, x0 + i * cw - cw / 2 + 8 * scale, y + 58 * scale, cw - 16 * scale, 8 * scale, 4 * scale);
           ctx.fill();
           ctx.globalAlpha = 1;
@@ -158,7 +166,7 @@ export function BootSplash() {
       animate={{ opacity: phase === "fade" ? 0 : 1 }}
       transition={{ duration: 0.45, ease: "easeInOut" }}
       className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-8"
-      style={{ background: MOTION_COLORS.navy }}
+      style={{ background: SPLASH_BG }}
       data-testid="boot-splash"
       aria-hidden={phase === "fade"}
     >
@@ -176,10 +184,10 @@ export function BootSplash() {
           transition={{ delay: LOGO_IN - HANDOFF, duration: 0.5, ease: [0.34, 1.4, 0.64, 1] }}
           className="absolute flex flex-col items-center gap-5"
         >
-          <img src={bootLogo} alt="" className="size-28 rounded-full shadow-[0_18px_60px_rgba(59,123,255,0.35)] ring-1 ring-white/25" draggable={false} />
+          <img src={bootLogo} alt="" className="size-28 rounded-full shadow-[0_18px_60px_rgba(23,23,23,0.18)] ring-1 ring-black/10" draggable={false} />
           <div className="text-center">
-            <p className="text-lg font-semibold tracking-[0.3em] text-white">ARIA</p>
-            <p className="mt-1 text-[11px] font-medium tracking-[0.2em] text-white/45">MOBILE</p>
+            <p className="text-lg font-semibold tracking-[0.3em] text-neutral-950">ARIA</p>
+            <p className="mt-1 text-[11px] font-medium tracking-[0.2em] text-neutral-400">MOBILE</p>
           </div>
         </motion.div>
       )}

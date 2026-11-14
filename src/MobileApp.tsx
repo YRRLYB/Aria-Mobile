@@ -155,6 +155,8 @@ export type MobileControls = {
   refreshNeteaseData: () => void;
   refreshRoamData: () => Promise<void>;
   setSelectedArtist: (artist: ArtistSummary | null) => void;
+  /** Opens an artist page by bare name (e.g. from the now-playing screen). */
+  openArtist: (artist: string) => void;
   setSearchQuery: (query: string) => void;
   setHifiEnabled: (enabled: boolean) => void;
   setQualityLevel: (level: QualityLevel) => void;
@@ -1954,6 +1956,16 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     refreshNeteaseData,
     refreshRoamData,
     setSelectedArtist,
+    openArtist: (artist: string) => {
+      const name = artist.trim();
+      if (!name) return;
+      setNowPlayingOpen(false);
+      setCollection(null);
+      // A bare name is enough: the discovery hook resolves the provider id
+      // (and remote tracks/avatar) for local-only artist entries on its own.
+      setSelectedArtist({ id: `name:${name.toLowerCase()}`, name, source: "local", avatarUrl: null, trackCount: 0 });
+      setActiveTab("search");
+    },
     setSearchQuery,
     kaleidoscopeEnabled,
     setKaleidoscopeEnabled: (enabled: boolean) => {
