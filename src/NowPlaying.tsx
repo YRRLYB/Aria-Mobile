@@ -33,6 +33,7 @@ import {
   extractDominantColors,
   getActiveLyricIndex,
   qualityOptions,
+  splitArtistNames,
   type CoverPalette,
   type QualityLevel,
 } from "@/lib/playerPresentation";
@@ -499,7 +500,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
         {artistOpen && (
           <ArtistActionsSheet
             name={activeTrack.artist}
-            onOpenArtist={() => openArtist(activeTrack.artist)}
+            onOpenArtist={(artistName) => openArtist(artistName)}
             onClose={() => setArtistOpen(false)}
           />
         )}
@@ -540,10 +541,13 @@ function ArtistActionsSheet({
   onClose,
 }: {
   name: string;
-  onOpenArtist: () => void;
+  onOpenArtist: (artistName: string) => void;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  // Multi-artist credits ("A/B") must not become one combined lookup — offer
+  // each credited artist separately so every page resolves.
+  const artists = useMemo(() => splitArtistNames(name).slice(0, 3), [name]);
   async function copy() {
     const ok = await copyPlainText(name);
     if (ok) {
@@ -594,19 +598,25 @@ function ArtistActionsSheet({
             </span>
             <span className="text-sm">{copied ? "已复制" : "复制歌手名字"}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              onOpenArtist();
-            }}
-            className="tap-scale flex w-full items-center gap-3 rounded-[0.9rem] px-2 py-3 text-left transition active:bg-white/10"
-          >
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/[0.07] text-white/70">
-              <UserRound className="size-4" />
-            </span>
-            <span className="text-sm">打开歌手主页</span>
-          </button>
+          {artists.map((artistName) => (
+            <button
+              key={artistName}
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenArtist(artistName);
+              }}
+              className="tap-scale flex w-full items-center gap-3 rounded-[0.9rem] px-2 py-3 text-left transition active:bg-white/10"
+            >
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/[0.07] text-white/70">
+                <UserRound className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {artists.length > 1 ? `打开「${artistName}」的主页` : "打开歌手主页"}
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-white/30" />
+            </button>
+          ))}
         </div>
       </motion.div>
     </motion.div>

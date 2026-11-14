@@ -184,7 +184,9 @@ export function BootSplash() {
           transition={{ delay: LOGO_IN - HANDOFF, duration: 0.5, ease: [0.34, 1.4, 0.64, 1] }}
           className="absolute flex flex-col items-center gap-5"
         >
-          <img src={bootLogo} alt="" className="size-28 rounded-full shadow-[0_18px_60px_rgba(23,23,23,0.18)] ring-1 ring-black/10" draggable={false} />
+          {/* icon-only.png is the app icon itself (white squircle with
+              transparent corners) — show it as-is, no extra ring or shadow. */}
+          <img src={bootLogo} alt="" className="size-22" draggable={false} />
           <div className="text-center">
             <p className="text-lg font-semibold tracking-[0.3em] text-neutral-950">ARIA</p>
             <p className="mt-1 text-[11px] font-medium tracking-[0.2em] text-neutral-400">MOBILE</p>

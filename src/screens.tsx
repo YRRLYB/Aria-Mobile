@@ -50,7 +50,6 @@ import { rememberSearch, newestLiked } from "./libraryStorage";
 import { AriaAudio, isNativeApp, type AudioCacheStats } from "./native/ariaAudio";
 import { DetailHeader, EmptyState, InlineError, LoadingState, PageHeader, SettingsGroup, SettingsRow, Surface, Toggle } from "./ui";
 import { LikeHeart } from "./HeartPulse";
-import { KaleidoscopeCover } from "./Kaleidoscope";
 import { groupTracksByAlbum, formatTotalDuration, type AlbumGroup } from "./libraryView";
 import { ArtistAvatar } from "./ArtistAvatar";
 import { cachedCoverUrl, clearCoverCache, getCoverCacheStats, type CoverCacheStats } from "./coverCache";
@@ -149,9 +148,10 @@ function HorizontalTrackCard({
     <button
       type="button"
       onClick={onPlay}
-      className="tap-scale w-32 shrink-0 text-left"
+      className="tap-scale w-28 shrink-0 text-center"
     >
-      <div className={`overflow-hidden rounded-[0.9rem] shadow-sm ${active ? "ring-2 ring-neutral-950" : ""}`}>
+      {/* Watch-style circular cover for the horizontal strips. */}
+      <div className={`overflow-hidden rounded-full shadow-[0_10px_26px_rgba(47,55,76,0.16)] ring-1 ring-black/5 ${active ? "ring-2 ring-neutral-950" : ""}`}>
         <TrackCover track={track} className="aspect-square w-full" />
       </div>
       <p className="mt-1.5 truncate text-xs font-medium">{track.title}</p>
@@ -188,33 +188,49 @@ export function RandomPlayButton({ onPlay, count }: { onPlay: () => void; count:
   );
 }
 
-function LikedHero({ tracks, onOpen, onPlayAll }: { tracks: Track[]; onOpen: () => void; onPlayAll: () => void }) {
+function LikedHero({ tracks, onOpen, onPlayAll, onShuffle }: { tracks: Track[]; onOpen: () => void; onPlayAll: () => void; onShuffle: () => void }) {
   const first = tracks[0];
   return (
-    <div className="relative mt-5 overflow-hidden rounded-[1.35rem] border border-white/15 bg-[linear-gradient(135deg,#1d1b24_0%,#352d3c_58%,#57303e_100%)] p-4 text-white shadow-[0_18px_50px_rgba(40,35,55,0.28)]">
-      <div className="pointer-events-none absolute -right-8 -top-10 size-32 rounded-full bg-rose-400/20 blur-2xl" aria-hidden />
+    <div className="relative mt-5 overflow-hidden rounded-[1.35rem] border border-white/75 bg-white/70 p-4 shadow-[0_14px_40px_rgba(47,55,76,0.14)] backdrop-blur">
+      <div className="pointer-events-none absolute -right-10 -top-12 size-36 rounded-full bg-rose-300/25 blur-2xl" aria-hidden />
+      <div className="pointer-events-none absolute -bottom-14 -left-8 size-28 rounded-full bg-indigo-300/20 blur-2xl" aria-hidden />
       <div className="relative flex items-center gap-3.5">
         <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3.5 text-left">
-          <span className="flex size-18 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] bg-white/10 shadow-lg ring-1 ring-white/15">
-            {first ? <TrackCover track={first} priority className="size-full" /> : <Heart className="size-7 text-white/55" />}
+          {/* Watch-style circular cover for the hero. */}
+          <span className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full shadow-[0_10px_26px_rgba(47,55,76,0.22)] ring-2 ring-white">
+            {first ? <TrackCover track={first} priority className="size-full" /> : <Heart className="size-7 text-rose-400" />}
+            <span className="absolute inset-x-0 bottom-0 flex h-4 items-center justify-center bg-rose-500/85 text-[8px] font-semibold tracking-[0.14em] text-white">
+              LIKED
+            </span>
           </span>
           <span className="min-w-0">
-            <span className="block text-[10px] font-semibold uppercase tracking-[0.24em] text-white/45">Your favorites</span>
-            <span className="mt-1 block truncate text-lg font-semibold">我喜欢的音乐</span>
-            <span className="mt-0.5 block truncate text-xs text-white/55">
-              {tracks.length ? `${tracks.length} 首 · 按收藏时间排序` : "播放时点 ♡ 收藏喜欢的歌"}
+            <span className="block text-[10px] font-semibold uppercase tracking-[0.24em] text-rose-400">我喜欢的音乐</span>
+            <span className="mt-1 block truncate text-lg font-semibold text-neutral-950">{tracks.length} 首歌</span>
+            <span className="mt-0.5 block truncate text-xs text-neutral-500">
+              {tracks.length ? "按收藏时间排序 · 点封面查看全部" : "播放时点 ♡ 收藏喜欢的歌"}
             </span>
           </span>
         </button>
-        <button
-          type="button"
-          onClick={onPlayAll}
-          disabled={!tracks.length}
-          className="tap-scale flex size-11 shrink-0 items-center justify-center rounded-full bg-white text-neutral-950 shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition active:scale-95 disabled:opacity-40"
-          aria-label="播放我喜欢的音乐"
-        >
-          <Play className="size-5 translate-x-[1px] fill-current" />
-        </button>
+        <div className="flex shrink-0 flex-col items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onPlayAll}
+            disabled={!tracks.length}
+            className="tap-scale flex size-11 items-center justify-center rounded-full bg-neutral-950 text-white shadow-[0_8px_24px_rgba(23,23,23,0.3)] transition active:scale-95 disabled:opacity-40"
+            aria-label="播放我喜欢的音乐"
+          >
+            <Play className="size-5 translate-x-[1px]" />
+          </button>
+          <button
+            type="button"
+            onClick={onShuffle}
+            disabled={!tracks.length}
+            className="tap-scale flex size-8 items-center justify-center rounded-full bg-neutral-950/[0.06] text-neutral-600 transition active:scale-95 disabled:opacity-40"
+            aria-label="随机播放我喜欢的音乐"
+          >
+            <Shuffle className="size-3.5" />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -254,6 +270,7 @@ export function HomeScreen(controls: MobileControls) {
         tracks={likedTracks}
         onOpen={() => openCollection("liked")}
         onPlayAll={() => likedTracks[0] && chooseTrack(likedTracks[0].id, likedTracks)}
+        onShuffle={() => controls.playShuffledTracks(likedTracks)}
       />
 
       <div className="mt-3 grid grid-cols-2 gap-2">
@@ -287,10 +304,15 @@ export function HomeScreen(controls: MobileControls) {
           <SectionHeader title={title} Icon={Icon} action={
             <button onClick={() => openCollection(id)} aria-label={`查看全部${title}`} title={`查看全部${title}`} className="flex size-9 items-center justify-center"><ChevronRight className="size-5" /></button>
           } />
-          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-            {tracks.slice(0, 5).map((track) => <HorizontalTrackCard key={track.id} track={track} active={controls.activeTrackId === track.id} onPlay={() => chooseTrack(track.id, tracks)} />)}
-            <button onClick={() => openCollection(id)} className="flex w-28 shrink-0 flex-col items-center justify-center gap-2 rounded-lg bg-white/50 text-xs text-neutral-500">
-              <ChevronRight className="size-6" />{tracks.length ? "查看全部" : "加载音乐"}
+          <div className="no-scrollbar -mx-4 flex items-start gap-3 overflow-x-auto px-4 pb-1">
+            {/* Alternating vertical offset echoes the watch honeycomb rhythm. */}
+            {tracks.slice(0, 5).map((track, index) => (
+              <div key={track.id} className={index % 2 === 1 ? "mt-5" : ""}>
+                <HorizontalTrackCard track={track} active={controls.activeTrackId === track.id} onPlay={() => chooseTrack(track.id, tracks)} />
+              </div>
+            ))}
+            <button onClick={() => openCollection(id)} className={`flex w-24 shrink-0 flex-col items-center justify-center gap-1.5 rounded-full bg-white/60 py-4 text-xs text-neutral-500 ${tracks.length % 2 === 1 ? "mt-5" : ""}`}>
+              <ChevronRight className="size-5" />{tracks.length ? "查看全部" : "加载音乐"}
             </button>
           </div>
         </section>
@@ -426,16 +448,10 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
 }
 
 function AlbumCard({ album, onOpen }: { album: AlbumGroup; onOpen: () => void }) {
-  const coverSrc = album.coverTrack.coverUrl ?? (/^(https?:|content:)/.test(album.coverTrack.cover) ? album.coverTrack.cover : undefined);
   return (
     <button type="button" onClick={onOpen} className="tap-scale min-w-0 text-left">
-      <div className="overflow-hidden rounded-[0.95rem] bg-white/70 shadow-sm">
-        {/* Kaleidoscope album art (Apple-watch-face style): the plain cover
-            stays underneath until the mandala has been rendered. */}
-        <span className="relative block aspect-square w-full overflow-hidden">
-          <TrackCover track={album.coverTrack} className="absolute inset-0" />
-          {coverSrc && <KaleidoscopeCover src={coverSrc} className="absolute inset-0 h-full w-full" />}
-        </span>
+      <div className="overflow-hidden rounded-[0.95rem] bg-white/70 shadow-sm ring-1 ring-black/5">
+        <TrackCover track={album.coverTrack} className="aspect-square w-full" />
       </div>
       <p className="mt-1.5 truncate text-xs font-semibold">{album.title}</p>
       <p className="mt-0.5 truncate text-[11px] text-neutral-500">{album.artist} · {album.tracks.length} 首</p>
@@ -721,11 +737,29 @@ export function ArtistDetail({
 
       {albums.length > 0 && (
         <section className="mt-5">
-          <h2 className="mb-2 text-sm font-semibold">专辑</h2>
-          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-            {albums.map((album) => (
-              <div key={album.key} className="w-36 shrink-0">
-                <AlbumCard album={album} onOpen={() => setOpenedAlbum(album)} />
+          <h2 className="mb-1 text-sm font-semibold">专辑 · {albums.length}</h2>
+          {/* Apple-watch-style honeycomb: circular album covers in offset rows. */}
+          <div className="flex flex-col items-center py-2">
+            {chunkAlbumRows(albums, 3).map((row, rowIndex) => (
+              <div
+                key={rowIndex}
+                className={`flex gap-2.5 py-1 ${rowIndex % 2 === 1 ? "translate-x-12" : ""}`}
+              >
+                {row.map((album) => (
+                  <button
+                    key={album.key}
+                    type="button"
+                    onClick={() => setOpenedAlbum(album)}
+                    className="tap-scale w-24 shrink-0 text-center"
+                    aria-label={`打开专辑 ${album.title}`}
+                  >
+                    <span className="block aspect-square w-full overflow-hidden rounded-full bg-white/70 shadow-[0_10px_26px_rgba(47,55,76,0.18)] ring-1 ring-black/5">
+                      <TrackCover track={album.coverTrack} className="size-full" />
+                    </span>
+                    <span className="mt-1.5 block truncate text-[10px] font-medium text-neutral-600">{album.title}</span>
+                    <span className="block truncate text-[9px] text-neutral-400">{album.tracks.length} 首</span>
+                  </button>
+                ))}
               </div>
             ))}
           </div>
@@ -733,6 +767,15 @@ export function ArtistDetail({
       )}
     </div>
   );
+}
+
+/** Splits albums into rows of `size` for the honeycomb layout. */
+function chunkAlbumRows(albums: AlbumGroup[], size: number): AlbumGroup[][] {
+  const rows: AlbumGroup[][] = [];
+  for (let index = 0; index < albums.length; index += size) {
+    rows.push(albums.slice(index, index + size));
+  }
+  return rows;
 }
 
 function uniqueTracks(tracks: Track[]): Track[] {
