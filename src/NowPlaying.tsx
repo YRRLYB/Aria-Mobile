@@ -174,8 +174,8 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
       className="fixed inset-0 z-30 flex flex-col overflow-hidden text-white"
       style={{ background: BASE_BG }}
     >
-      {/* ---- Immersive background: full-bleed artwork melting into its own
-           dominant color, then to near-black (NetEase-style gradient) ---- */}
+      {/* ---- Stage backdrop: the artwork extends as a blurred wash of its
+           own dominant color - no hard edge between image and page. ---- */}
       <div className="absolute inset-0" aria-hidden>
         <AnimatePresence>
           {displayCoverUrl && (
@@ -184,7 +184,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
               src={displayCoverUrl}
               alt=""
               initial={{ opacity: 0 }}
-              animate={{ opacity: view === "lyrics" ? 0.72 : 1 }}
+              animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.5 }}
               onError={(event) => {
@@ -194,38 +194,23 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
                   event.currentTarget.style.display = "none";
                 }
               }}
-              className="absolute inset-x-0 top-0 h-[64%] w-full object-cover"
+              className="absolute inset-0 h-full w-full scale-[1.4] object-cover blur-2xl brightness-[0.62]"
               draggable={false}
             />
           )}
         </AnimatePresence>
-        {/* dominant tint over the artwork keeps the whole page in one hue.
-            Must reach full opacity before the artwork's bottom edge (64%)
-            so the image melts into the background without a hard cut. */}
+        {/* dominant tint melts the wash into near-black under the controls */}
         <div
           className="absolute inset-0 transition-[background] duration-700"
           style={{
-            background: `linear-gradient(180deg, ${dominant}30 0%, ${dominant}12 22%, ${dominantSoft}d9 44%, ${dominantDeep} 58%, ${BASE_BG} 74%, ${BASE_BG} 100%)`,
+            background: `linear-gradient(180deg, ${dominant}26 0%, ${dominant}14 30%, ${dominantSoft}c4 55%, ${dominantDeep} 75%, ${BASE_BG} 100%)`,
           }}
         />
-        {/* top scrim so the header stays readable on bright artwork */}
+        {/* top scrim so the header stays readable */}
         <div
           className="absolute inset-x-0 top-0 h-28"
           style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0))" }}
         />
-        {/* right-side scrim keeps the floating lyrics legible on artwork */}
-        <AnimatePresence>
-          {view === "lyrics" && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.24 }}
-              className="absolute inset-x-0 top-0 h-[64%]"
-              style={{ background: "linear-gradient(90deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.30) 48%, rgba(0,0,0,0.74) 100%)" }}
-            />
-          )}
-        </AnimatePresence>
       </div>
 
       {/* ---- Header ---- */}
@@ -253,7 +238,9 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
         </button>
       </div>
 
-      {/* ---- Middle zone: cover breathing room / lyrics / queue ---- */}
+      {/* ---- Stage: one fixed area shared by the cover and the lyrics view.
+           Only its content swaps, so the title/progress/controls below never
+           move - no leftover blank zones, no seams. ---- */}
       <div className="relative z-10 flex min-h-0 flex-1 flex-col">
         {view !== "queue" && (
           <div className="relative flex min-h-0 flex-1 flex-col">
@@ -261,10 +248,10 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
               {view === "lyrics" ? (
                 <motion.div
                   key="lyrics"
-                  initial={{ opacity: 0, y: 18 }}
+                  initial={{ opacity: 0, y: 14 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 18 }}
-                  transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                  exit={{ opacity: 0, y: 14 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                   className="flex min-h-0 flex-1 flex-col"
                 >
                   <LyricsView controls={controls} onClose={() => setView("cover")} />
@@ -275,35 +262,46 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 10 }}
-                  transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-                  className="relative flex min-h-0 flex-1 flex-col justify-end px-6 pb-6"
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  className="relative flex min-h-0 flex-1 flex-col"
                 >
                   <button
                     type="button"
                     onClick={() => setView("lyrics")}
-                    className="absolute inset-0"
+                    className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-8"
                     aria-label="显示歌词"
-                  />
-                  <div className="pointer-events-none relative z-10 flex flex-col items-end gap-1.5 text-right">
-                    {previewLyric ? (
-                      <>
-                        <motion.p
-                          layoutId="active-lyric-line"
-                          transition={{ type: "spring", stiffness: 260, damping: 30 }}
-                          className="line-clamp-2 max-w-[86%] text-right text-[1.05rem] font-semibold leading-7 text-white/90 [text-shadow:0_2px_18px_rgba(0,0,0,0.85)]"
-                        >
-                          {previewLyric}
-                        </motion.p>
-                        {nextLyric && (
-                          <p className="line-clamp-1 max-w-[80%] text-right text-xs leading-5 text-white/45 [text-shadow:0_2px_12px_rgba(0,0,0,0.8)]">
-                            {nextLyric}
-                          </p>
-                        )}
-                      </>
+                  >
+                    {displayCoverUrl ? (
+                      <motion.img
+                        key={displayCoverUrl}
+                        src={displayCoverUrl}
+                        alt=""
+                        initial={{ opacity: 0, scale: 0.96 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                        onError={(event) => {
+                          if (coverUrl && event.currentTarget.src !== coverUrl) {
+                            event.currentTarget.src = coverUrl;
+                          } else {
+                            event.currentTarget.style.visibility = "hidden";
+                          }
+                        }}
+                        className="aspect-square w-[min(62vw,290px)] rounded-[1.2rem] shadow-[0_30px_80px_rgba(0,0,0,0.6)]"
+                        draggable={false}
+                      />
                     ) : (
-                      <span className="text-xs text-white/35">点按封面显示歌词</span>
+                      <span className="flex aspect-square w-[min(62vw,290px)] items-center justify-center rounded-[1.2rem] bg-white/10">
+                        <ListMusic className="size-10 text-white/30" />
+                      </span>
                     )}
-                  </div>
+                    <motion.p
+                      layoutId="active-lyric-line"
+                      transition={{ type: "spring", stiffness: 260, damping: 30 }}
+                      className="line-clamp-2 max-w-full text-center text-[0.95rem] font-medium leading-6 text-white/85 [text-shadow:0_2px_18px_rgba(0,0,0,0.85)]"
+                    >
+                      {previewLyric || "点按封面查看歌词"}
+                    </motion.p>
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>

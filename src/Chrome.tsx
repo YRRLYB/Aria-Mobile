@@ -50,9 +50,20 @@ export function MiniPlayer(controls: MobileControls) {
       data-testid="mini-player"
     >
       <button type="button" onClick={openNowPlaying} aria-label="打开播放页" className="flex min-w-0 flex-1 items-center gap-3 text-left">
-      {/* Same cover size/radius as TrackRow (screens.tsx) so the bottom of a
-          detail page shows one consistent cover size, not big + small. */}
-      <TrackCover track={activeTrack} priority className="size-9 shrink-0 rounded-[0.55rem]" />
+      {/* The playing track gets the one circle in the design language: a
+          spinning disc that pauses with playback (angle preserved). */}
+      <span
+        data-paused={playing ? "false" : "true"}
+        className="aria-disc relative block size-10 shrink-0 overflow-hidden rounded-full shadow-[0_4px_14px_rgba(23,23,23,0.28)]"
+      >
+        <TrackCover track={activeTrack} priority className="size-full" />
+        <span
+          aria-hidden
+          className="absolute inset-0 rounded-full"
+          style={{ background: "repeating-radial-gradient(circle at 50% 50%, rgba(0,0,0,0.18) 0 1.5px, rgba(0,0,0,0) 1.5px 3.5px)" }}
+        />
+        <span aria-hidden className="absolute left-1/2 top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-950/85 ring-1 ring-white/50" />
+      </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{activeTrack.title}</p>
         <p className="mt-0.5 truncate text-xs text-neutral-500">{activeTrack.artist}</p>

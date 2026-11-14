@@ -88,6 +88,21 @@ body {
   animation: aria-tab-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* The spinning disc of the playing track (mini player). The animation keeps
+   running while paused via play-state, so the angle is preserved. */
+@keyframes aria-disc-spin {
+  to { transform: rotate(360deg); }
+}
+.aria-disc {
+  animation: aria-disc-spin 14s linear infinite;
+}
+.aria-disc[data-paused="true"] {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .aria-disc { animation: none; }
+}
+
 /* List rows / cards slide in once when their container mounts. */
 @keyframes aria-rise-in {
   from { opacity: 0; transform: translateY(8px); }
