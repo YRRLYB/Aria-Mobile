@@ -200,14 +200,14 @@ function LikedHero({ tracks, onOpen, onPlayAll, onShuffle }: { tracks: Track[]; 
           <span className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full shadow-[0_10px_26px_rgba(47,55,76,0.22)] ring-2 ring-white">
             {first ? <TrackCover track={first} priority className="size-full" /> : <Heart className="size-7 text-rose-400" />}
             <span className="absolute inset-x-0 bottom-0 flex h-4 items-center justify-center bg-rose-500/85 text-[8px] font-semibold tracking-[0.14em] text-white">
-              LIKED
+              喜 欢
             </span>
           </span>
           <span className="min-w-0">
             <span className="block text-[10px] font-semibold uppercase tracking-[0.24em] text-rose-400">我喜欢的音乐</span>
             <span className="mt-1 block truncate text-lg font-semibold text-neutral-950">{tracks.length} 首歌</span>
             <span className="mt-0.5 block truncate text-xs text-neutral-500">
-              {tracks.length ? "按收藏时间排序 · 点封面查看全部" : "播放时点 ♡ 收藏喜欢的歌"}
+              {tracks.length ? "按收藏时间排序 · 点封面查看全部" : "播放时点红心收藏喜欢的歌"}
             </span>
           </span>
         </button>
@@ -258,7 +258,7 @@ export function HomeScreen(controls: MobileControls) {
   return (
     <div className="pb-4">
       <PageHeader
-        eyebrow="Aria Music"
+        eyebrow="我的音乐"
         title={neteaseAccount?.connected ? `你好，${neteaseAccount.nickname ?? "听众"}` : "音乐从这里开始"}
         description={neteaseAccount?.connected ? "继续听你喜欢的音乐吧。" : "连接桌面端或登录网易云，开始你的音乐空间。"}
         action={neteaseAccount?.avatarUrl
@@ -381,7 +381,6 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
   return (
     <div className="pb-4">
       <PageHeader
-        eyebrow="Your library"
         title="音乐库"
         description="喜欢的歌、专辑、手机音乐和桌面曲库都在这里。"
       />
@@ -512,7 +511,7 @@ export function AlbumDetail({ album, controls, onBack, backLabel = "返回专辑
           <TrackCover track={cover} className="size-full" priority />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">Album</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">专辑</p>
           <h1 className="mt-1 line-clamp-2 text-lg font-semibold leading-snug">{album.title}</h1>
           <p className="mt-1 truncate text-xs text-neutral-500">
             {album.artist} · {album.tracks.length} 首 · {formatTotalDuration(album.tracks)}
@@ -615,7 +614,7 @@ function LikedSection(controls: MobileControls) {
         icon={<Heart className="size-5" />}
         title={neteaseAccount?.connected ? "还没有喜欢的音乐" : "先登录网易云"}
         description={neteaseAccount?.connected
-          ? "播放歌曲时点一下 ♡，它就会出现在这里。"
+          ? "播放歌曲时点一下红心，它就会出现在这里。"
           : "在设置里登录网易云后，会自动同步「我喜欢的音乐」。"}
       />
     );
@@ -703,7 +702,7 @@ export function ArtistDetail({
       <div className="flex items-center gap-4 rounded-[1.35rem] border border-white/75 bg-white/62 p-4 shadow-sm">
         <ArtistAvatar name={artist.name} avatarUrl={artist.avatarUrl} size="lg" />
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">Artist</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">歌手</p>
           <h1 className="mt-1 truncate text-lg font-semibold">{artist.name}</h1>
           <p className="mt-1 text-xs text-neutral-500">{tracks.length} 首 · {albums.length} 张专辑</p>
           <div className="mt-3 flex items-center gap-2">
@@ -856,7 +855,7 @@ function PlaylistsSection(controls: MobileControls) {
 export function PlaylistCard({ playlist, onOpen }: { playlist: ProviderPlaylist; onOpen: () => void }) {
   return (
     <button type="button" onClick={onOpen} className="tap-scale min-w-0 text-left">
-      <div className="relative overflow-hidden rounded-[0.9rem]">
+      <div className="relative overflow-hidden rounded-[0.9rem] ring-1 ring-black/5">
         <PlaylistCover playlist={playlist} className="aspect-square w-full" />
         {playlist.subscribed && (
           <span className="absolute left-1.5 top-1.5 rounded-full bg-black/55 px-2 py-0.5 text-[9px] font-medium text-white/85 backdrop-blur">
@@ -904,7 +903,7 @@ export function PlaylistDetail({
       <DetailHeader
         backLabel={backLabel}
         onBack={onBack}
-        label={playlist.subscribed ? "Collected" : "Playlist"}
+        label={playlist.subscribed ? "收藏的歌单" : "歌单"}
         title={playlist.name}
         meta={
           <>
@@ -1236,7 +1235,7 @@ export function SearchScreen(controls: MobileControls) {
 
   return (
     <div className="pb-4">
-      <PageHeader eyebrow="Discover" title="搜索" description="输入关键词后按回车或点「搜索」开始。" />
+      <PageHeader title="搜索" description="输入关键词后按回车或点「搜索」开始。" />
       <div className="mt-3 flex items-center gap-2 rounded-[1rem] border border-neutral-950/10 bg-white/80 px-3 py-2 transition focus-within:border-neutral-950/40">
         <Search className="size-4 shrink-0 text-neutral-400" />
         <input
@@ -1479,7 +1478,7 @@ export function SettingsScreen(controls: MobileControls) {
 
   return (
     <div className="space-y-4 pb-4">
-      <PageHeader eyebrow="Settings" title="设置" description="账号、播放页外观、缓存与连接。" />
+      <PageHeader title="设置" description="账号、缓存、连接与系统设置。" />
 
       {controls.directMode ? (
         <DirectNeteaseCard controls={controls} />

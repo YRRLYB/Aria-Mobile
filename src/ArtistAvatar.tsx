@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { UserRound } from "./icons";
 import { cachedCoverUrl } from "./coverCache";
 
 const palettes = [
@@ -80,7 +81,7 @@ export function ArtistAvatar({
         className,
       )}
     >
-      {name.slice(0, 1).toUpperCase() || "♪"}
+      {name.slice(0, 1).toUpperCase() || <UserRound className="size-6 opacity-60" />}
     </span>
   );
 }

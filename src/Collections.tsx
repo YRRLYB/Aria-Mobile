@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Compass, History, Plus, Radar, RefreshCw, Search } from "./icons";
+import { Compass, HeartFill, History, Plus, Radar, RefreshCw, Search } from "./icons";
 import type { CollectionId, MobileControls } from "./MobileApp";
 import { PlayAllButton, RandomPlayButton, TrackRow } from "./screens";
 import { CoverCollage, TrackCover } from "./Chrome";
@@ -41,7 +41,7 @@ export function CollectionScreen({ collection, controls, onBack }: { collection:
   const visibleTracks = isHistory ? filtered : filtered.slice(0, limit);
   const visual = collection === "liked" ? (
     <div className="size-28 shrink-0 overflow-hidden rounded-[1.1rem] shadow-sm">
-      {tracks[0] ? <TrackCover track={tracks[0]} className="size-full" priority /> : <div className="flex size-full items-center justify-center rounded-[1.1rem] bg-rose-50 text-rose-400">♡</div>}
+      {tracks[0] ? <TrackCover track={tracks[0]} className="size-full" priority /> : <div className="flex size-full items-center justify-center rounded-[1.1rem] bg-rose-50 text-rose-400"><HeartFill className="size-10" /></div>}
     </div>
   ) : collection === "daily" ? (
     tracks.length ? (
@@ -63,7 +63,7 @@ export function CollectionScreen({ collection, controls, onBack }: { collection:
   const meta = collection === "history"
     ? `${tracks.length} 首 · 按播放时间记录`
     : `${tracks.length} 首 · ${formatTotalDuration(tracks)}`;
-  const label = collection === "daily" ? "Daily Mix" : collection === "roam" ? "Radio" : collection === "history" ? "History" : "Playlist";
+  const label = collection === "daily" ? "每日推荐" : collection === "roam" ? "私人漫游" : collection === "history" ? "最近播放" : "歌单";
   const description = collection === "daily"
     ? "每天根据你的听歌记录更新"
     : collection === "roam"
@@ -138,7 +138,7 @@ export function CollectionScreen({ collection, controls, onBack }: { collection:
         <EmptyState
           icon={<History className="size-5" />}
           title={query ? "没有匹配的音乐" : collection === "liked" ? "还没有喜欢的音乐" : "这里暂时没有内容"}
-          description={query ? "换个关键词试试。" : "播放歌曲时点一下 ♡，或者去首页看看推荐。"}
+          description={query ? "换个关键词试试。" : "播放歌曲时点一下红心，或者去首页看看推荐。"}
           action={
             <button
               type="button"

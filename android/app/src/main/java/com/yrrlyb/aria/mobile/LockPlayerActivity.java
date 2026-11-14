@@ -112,12 +112,12 @@ public class LockPlayerActivity extends Activity {
                 favorite.setContentDescription(data != null && data.liked ? "取消喜欢" : "喜欢");
                 String line = "让音乐陪你片刻", translated = "";
                 if (data != null && data.lyrics.length() > 0) {
-                    line = "♪";
+                    line = "···";
                     for (int i = 0; i < data.lyrics.length(); i++) {
                         JSONObject entry = data.lyrics.optJSONObject(i);
                         if (entry == null) continue;
                         if (parseTime(entry.optString("time")) > position) break;
-                        line = entry.optString("text", "♪"); translated = entry.optString("translation", "");
+                        line = entry.optString("text", "···"); translated = entry.optString("translation", "");
                     }
                 }
                 String nextLyric = item.mediaId + line + translated;
@@ -140,7 +140,7 @@ public class LockPlayerActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         background = new CoverBackground(); root.addView(background, new FrameLayout.LayoutParams(-1, -1));
         LinearLayout header = new LinearLayout(this); header.setOrientation(LinearLayout.VERTICAL);
-        TextView brand = text(11, 0xccffffff); brand.setText("A R I A  /  正在聆听"); brand.setLetterSpacing(.12f); header.addView(brand);
+        TextView brand = text(11, 0xccffffff); brand.setText("A R I A  ·  正在聆听"); brand.setLetterSpacing(.12f); header.addView(brand);
         time = text(64, Color.WHITE); time.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL)); time.setIncludeFontPadding(false); add(header, time, 20);
         date = text(14, 0xddffffff); add(header, date, 3);
         title = text(25, Color.WHITE); title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL)); title.setMaxLines(2); add(header, title, 24);

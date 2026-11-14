@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, Loader2, Server, Smartphone, Wifi } from "./icons";
+import { AlertCircle, CheckCircle2, Loader2, Server, Wifi } from "./icons";
+import bootLogo from "../assets/icon-only.png";
 import { enableDirectMode, isDirectCapable } from "./native/neteaseDirect";
 import { parsePairingPayload, readConnection, saveConnection, verifyConnection } from "./connection";
 
@@ -59,9 +60,7 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
           className="mx-auto w-full max-w-sm"
         >
           <div className="flex items-center gap-3">
-            <span className="flex size-11 items-center justify-center rounded-2xl bg-neutral-950 text-white shadow-lg">
-              <Smartphone className="size-5" />
-            </span>
+            <img src={bootLogo} alt="" className="size-11 shrink-0" draggable={false} />
             <div>
               <h1 className="text-xl font-semibold">Aria 手机版</h1>
               <p className="text-xs text-neutral-500">连接同一局域网内的 Aria 桌面端</p>

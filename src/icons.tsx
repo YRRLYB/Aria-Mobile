@@ -465,6 +465,16 @@ export function Copy(props: AriaIconProps) {
   );
 }
 
+export function MusicNote(props: AriaIconProps) {
+  return (
+    <LineIcon {...props}>
+      <path d="M9.5 17.5V6.4l8-1.6v10.4" />
+      <circle cx="7" cy="17.6" r="2.6" />
+      <circle cx="15" cy="15.4" r="2.6" />
+    </LineIcon>
+  );
+}
+
 export function X(props: AriaIconProps) {
   return (
     <LineIcon {...props}>

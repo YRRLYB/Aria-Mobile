@@ -1,4 +1,4 @@
-import { Home, Library, Play, Playing, Search, Settings, SkipBack, SkipForward } from "./icons";
+import { Home, Library, MusicNote, Play, Playing, Search, Settings, SkipBack, SkipForward } from "./icons";
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { idleTrack } from "@/lib/trackMappers";
@@ -119,7 +119,11 @@ export function TrackCover({
         className={`absolute inset-0 flex items-center justify-center text-neutral-600 ${className}`}
         style={tint ? { background: `linear-gradient(140deg, ${tint}73, #ece7f2)` } : undefined}
       >
-        <span className="text-lg font-bold opacity-70">{track.title.slice(0, 1) || "♪"}</span>
+        {track.title.slice(0, 1) ? (
+          <span className="text-lg font-bold opacity-70">{track.title.slice(0, 1)}</span>
+        ) : (
+          <MusicNote className="size-6 opacity-55" />
+        )}
       </div>
       {src && <CoverImage key={src} src={src} priority={priority} />}
     </div>
