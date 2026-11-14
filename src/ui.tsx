@@ -2,6 +2,97 @@ import type { ReactNode } from "react";
 import { Loader2, ChevronRight } from "./icons";
 import { cn } from "@/lib/utils";
 
+/** The one switch implementation used across settings rows. */
+export function Toggle({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onChange}
+      className={`flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition disabled:opacity-40 ${
+        checked ? "bg-neutral-950" : "bg-neutral-200"
+      }`}
+    >
+      <span className={`size-5 rounded-full bg-white shadow-sm transition ${checked ? "translate-x-5" : ""}`} />
+    </button>
+  );
+}
+
+/** An icon + title + description row with an optional right-side control. */
+export function SettingsRow({
+  icon,
+  title,
+  description,
+  right,
+  onClick,
+  children,
+}: {
+  icon?: ReactNode;
+  title: ReactNode;
+  description?: ReactNode;
+  right?: ReactNode;
+  onClick?: () => void;
+  children?: ReactNode;
+}) {
+  const body = (
+    <>
+      {icon && (
+        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-950/[0.04] text-neutral-500">
+          {icon}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium leading-6">{title}</p>
+        {description && <p className="mt-0.5 text-[11px] leading-4 text-neutral-500">{description}</p>}
+        {children}
+      </div>
+      {right && <div className="shrink-0 pt-0.5">{right}</div>}
+    </>
+  );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className="tap-scale flex w-full items-start gap-3 py-3 text-left first:pt-0 last:pb-0">
+        {body}
+      </button>
+    );
+  }
+  return <div className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">{body}</div>;
+}
+
+/** A settings card with a Chinese heading and divided rows inside. */
+export function SettingsGroup({
+  title,
+  description,
+  children,
+  className,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn("rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm backdrop-blur", className)}>
+      <h3 className="text-sm font-semibold text-neutral-800">{title}</h3>
+      {description && <p className="mt-0.5 text-[11px] leading-4 text-neutral-500">{description}</p>}
+      <div className="mt-2 divide-y divide-neutral-950/[0.05]">{children}</div>
+    </section>
+  );
+}
+
 export function PageHeader({
   eyebrow,
   title,

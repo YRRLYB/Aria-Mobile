@@ -50,7 +50,9 @@ export function MiniPlayer(controls: MobileControls) {
       data-testid="mini-player"
     >
       <button type="button" onClick={openNowPlaying} aria-label="打开播放页" className="flex min-w-0 flex-1 items-center gap-3 text-left">
-      <TrackCover track={activeTrack} priority className="size-11 shrink-0 rounded-[0.7rem]" />
+      {/* Same cover size/radius as TrackRow (screens.tsx) so the bottom of a
+          detail page shows one consistent cover size, not big + small. */}
+      <TrackCover track={activeTrack} priority className="size-9 shrink-0 rounded-[0.55rem]" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{activeTrack.title}</p>
         <p className="mt-0.5 truncate text-xs text-neutral-500">{activeTrack.artist}</p>

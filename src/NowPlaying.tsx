@@ -8,12 +8,10 @@ import {
   ChevronUp,
   Download,
   GripVertical,
-  Heart,
-  HeartFill,
   ListMusic,
   Loader2,
-  Pause,
   Play,
+  Playing,
   Repeat,
   Repeat1,
   Shuffle,
@@ -36,6 +34,8 @@ import {
   type QualityLevel,
 } from "@/lib/playerPresentation";
 import { TrackCover } from "./Chrome";
+import { Kaleidoscope } from "./Kaleidoscope";
+import { LikeHeart } from "./HeartPulse";
 import type { MobileControls } from "./MobileApp";
 import { formatPlaybackQuality } from "./playbackQuality";
 import { cachedCoverUrl } from "./coverCache";
@@ -82,6 +82,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
     downloadingTrackIds,
     downloadTrack,
     deleteOfflineTrack,
+    kaleidoscopeEnabled,
     onClose,
     togglePlayback,
     playNext,
@@ -170,30 +171,36 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
       style={{ background: BASE_BG }}
     >
       {/* ---- Immersive background: full-bleed artwork melting into its own
-           dominant color, then to near-black (NetEase-style gradient) ---- */}
+           dominant color, then to near-black (NetEase-style gradient).
+           With the kaleidoscope look enabled, the artwork becomes a slowly
+           revolving mirrored-wedge pattern instead of the plain image. ---- */}
       <div className="absolute inset-0" aria-hidden>
-        <AnimatePresence>
-          {displayCoverUrl && (
-            <motion.img
-              key={coverUrl}
-              src={displayCoverUrl}
-              alt=""
-              initial={{ opacity: 0 }}
-              animate={{ opacity: view === "lyrics" ? 0.72 : 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.5 }}
-              onError={(event) => {
-                if (coverUrl && event.currentTarget.src !== coverUrl) {
-                  event.currentTarget.src = coverUrl;
-                } else {
-                  event.currentTarget.style.display = "none";
-                }
-              }}
-              className="absolute inset-x-0 top-0 h-[64%] w-full object-cover"
-              draggable={false}
-            />
-          )}
-        </AnimatePresence>
+        {kaleidoscopeEnabled && displayCoverUrl ? (
+          <Kaleidoscope src={displayCoverUrl} playing={playing} className="absolute inset-0 h-full w-full" />
+        ) : (
+          <AnimatePresence>
+            {displayCoverUrl && (
+              <motion.img
+                key={coverUrl}
+                src={displayCoverUrl}
+                alt=""
+                initial={{ opacity: 0 }}
+                animate={{ opacity: view === "lyrics" ? 0.72 : 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.5 }}
+                onError={(event) => {
+                  if (coverUrl && event.currentTarget.src !== coverUrl) {
+                    event.currentTarget.src = coverUrl;
+                  } else {
+                    event.currentTarget.style.display = "none";
+                  }
+                }}
+                className="absolute inset-x-0 top-0 h-[64%] w-full object-cover"
+                draggable={false}
+              />
+            )}
+          </AnimatePresence>
+        )}
         {/* dominant tint over the artwork keeps the whole page in one hue.
             Must reach full opacity before the artwork's bottom edge (64%)
             so the image melts into the background without a hard cut. */}
@@ -311,17 +318,19 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
                 <h2 className="truncate text-[1.35rem] font-semibold leading-snug">{activeTrack.title}</h2>
                 <p className="mt-1 truncate text-sm text-white/55">{activeTrack.artist}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => toggleLikeTrack(activeTrack.id)}
-                disabled={isIdle}
-                className="tap-scale flex size-11 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40"
-                aria-label={liked ? "取消喜欢" : "喜欢"}
-              >
-                {liked
-                  ? <HeartFill className="size-6 text-rose-500" />
-                  : <Heart className="size-6 text-white/70" />}
-              </button>
+              <div className="shrink-0">
+                <LikeHeart
+                  liked={liked}
+                  onToggle={() => toggleLikeTrack(activeTrack.id)}
+                  disabled={isIdle}
+                  iconPx={24}
+                  buttonClass="size-11"
+                  iconClass="size-6"
+                  inactiveIconClass="text-white/70"
+                  activeLabel="取消喜欢"
+                  inactiveLabel="喜欢"
+                />
+              </div>
             </div>
           </div>
         )}
@@ -371,7 +380,9 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
               className="tap-scale flex size-17 items-center justify-center rounded-full bg-white text-neutral-950 shadow-[0_16px_44px_rgba(0,0,0,0.45)] transition active:scale-95"
               aria-label={playing ? "暂停" : "播放"}
             >
-              {playing ? <Pause className="size-8" /> : <Play className="size-8 translate-x-[2px]" />}
+              {/* While playing, the static pause bars give way to the aria-icons
+                  "playing" equalizer — the animated mark from the desktop kit. */}
+              {playing ? <Playing className="size-8" /> : <Play className="size-8 translate-x-[2px]" />}
             </button>
             <button
               type="button"

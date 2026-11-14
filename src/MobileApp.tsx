@@ -27,6 +27,7 @@ import { useNeteaseData } from "@/hooks/useNeteaseData";
 import { useLyricsSync } from "@/hooks/useLyricsSync";
 import { useDiscovery, type SearchBundle } from "@/hooks/useDiscovery";
 import { ConnectScreen } from "./ConnectScreen";
+import { BootSplash } from "./BootSplash";
 import { clearConnection, readConnection, verifyConnection } from "./connection";
 import { App as CapacitorApp } from "@capacitor/app";
 import { AriaAudio, isNativeApp, setStatusBarIconsLight, type AriaAudioEvent, type EqualizerSettings, type UsbExclusiveSettings } from "./native/ariaAudio";
@@ -131,6 +132,8 @@ export type MobileControls = {
   libraryMeta: { roots: number; updatedAt: string | null };
   connection: { serverUrl: string; token: string };
   searchQuery: string;
+  kaleidoscopeEnabled: boolean;
+  setKaleidoscopeEnabled: (enabled: boolean) => void;
   chooseTrack: (trackId: string, preferredQueue?: Track[], options?: ChooseTrackOptions) => void;
   playShuffledTracks: (tracks: Track[], playlistId?: string) => void;
   playPlaylist: (playlist: ProviderPlaylist, tracks: Track[]) => void;
@@ -199,28 +202,39 @@ export function MobileApp() {
 
   if (gate === "checking") {
     return (
-      <div className="flex h-full items-center justify-center bg-[#f7f8fb]">
-        <p className="text-sm text-neutral-400">Aria 启动中…</p>
-      </div>
+      <>
+        <BootSplash />
+        <div className="flex h-full items-center justify-center bg-[#f7f8fb]">
+          <p className="text-sm text-neutral-400">Aria 启动中…</p>
+        </div>
+      </>
     );
   }
 
   if (gate === "unconfigured") {
     return (
-      <div className="h-full overflow-y-auto">
-        {gateError !== "none" && (
-          <p className="bg-amber-50 px-4 pt-3 text-center text-xs text-amber-700">
-            {gateError === "unreachable"
-              ? "无法连接到上次的服务器,请检查桌面端是否在线。"
-              : "连接令牌已失效,请重新配对。"}
-          </p>
-        )}
-        <ConnectScreen onConnected={() => setGate("ready")} />
-      </div>
+      <>
+        <BootSplash />
+        <div className="h-full overflow-y-auto">
+          {gateError !== "none" && (
+            <p className="bg-amber-50 px-4 pt-3 text-center text-xs text-amber-700">
+              {gateError === "unreachable"
+                ? "无法连接到上次的服务器,请检查桌面端是否在线。"
+                : "连接令牌已失效,请重新配对。"}
+            </p>
+          )}
+          <ConnectScreen onConnected={() => setGate("ready")} />
+        </div>
+      </>
     );
   }
 
-  return <AriaMobile onDisconnect={() => { clearConnection(); setGate("unconfigured"); }} />;
+  return (
+    <>
+      <BootSplash />
+      <AriaMobile onDisconnect={() => { clearConnection(); setGate("unconfigured"); }} />
+    </>
+  );
 }
 
 function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
@@ -307,6 +321,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
   });
   const [playHistory, setPlayHistory] = useState<PlayHistoryEntry[]>(readPlayHistory);
   const [searchQuery, setSearchQuery] = useState("");
+  // Kaleidoscope artwork look on the now-playing screen (default on).
+  const [kaleidoscopeEnabled, setKaleidoscopeEnabledState] = useState(() => {
+    try { return localStorage.getItem("aria-kaleidoscope") !== "0"; } catch { return true; }
+  });
   const [deviceTracks, setDeviceTracks] = useState<Track[]>(cachedLibrary.device);
   // Restored queue snapshots are kept as a live fallback pool. Without this,
   // a track that was queued but never played (and whose source playlist is not
@@ -1937,6 +1955,11 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     refreshRoamData,
     setSelectedArtist,
     setSearchQuery,
+    kaleidoscopeEnabled,
+    setKaleidoscopeEnabled: (enabled: boolean) => {
+      setKaleidoscopeEnabledState(enabled);
+      try { localStorage.setItem("aria-kaleidoscope", enabled ? "1" : "0"); } catch { /* best effort */ }
+    },
     setHifiEnabled: changeHifiPreference,
     setQualityLevel: changeQualityLevel,
     usbExclusive,

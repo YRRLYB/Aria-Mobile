@@ -3,8 +3,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";imp
   Disc3,
   Download,
   Heart,
-  HeartFill,
   History,
+  Immersive,
   ListMusic,
   Loader2,
   LogOut,
@@ -48,7 +48,8 @@ import type { NeteaseAccountSummary, ProviderPlaylist } from "@/lib/api";
 import type { MobileControls } from "./MobileApp";
 import { rememberSearch, newestLiked } from "./libraryStorage";
 import { AriaAudio, isNativeApp, type AudioCacheStats } from "./native/ariaAudio";
-import { DetailHeader, EmptyState, InlineError, LoadingState, PageHeader, Surface } from "./ui";
+import { DetailHeader, EmptyState, InlineError, LoadingState, PageHeader, SettingsGroup, SettingsRow, Surface, Toggle } from "./ui";
+import { LikeHeart } from "./HeartPulse";
 import { groupTracksByAlbum, formatTotalDuration, type AlbumGroup } from "./libraryView";
 import { ArtistAvatar } from "./ArtistAvatar";
 import { cachedCoverUrl, clearCoverCache, getCoverCacheStats, type CoverCacheStats } from "./coverCache";
@@ -98,16 +99,15 @@ export function TrackRow({
         <span className="shrink-0 text-xs text-neutral-400">{track.duration}</span>
       </button>
       {onLike && (
-        <button
-          type="button"
-          onClick={onLike}
-          className="tap-scale flex size-8 shrink-0 items-center justify-center rounded-full"
-          aria-label={liked ? "取消喜欢" : "喜欢"}
-        >
-          {liked
-            ? <HeartFill className="size-4 text-rose-500" />
-            : <Heart className="size-4 text-neutral-400" />}
-        </button>
+        <LikeHeart
+          liked={Boolean(liked)}
+          onToggle={onLike}
+          iconPx={16}
+          buttonClass="size-8"
+          iconClass="size-4"
+          activeLabel="取消喜欢"
+          inactiveLabel="喜欢"
+        />
       )}
       {onRemove && (
         <button
@@ -1103,8 +1103,11 @@ export function SearchScreen(controls: MobileControls) {
   const [expanded, setExpanded] = useState({ artists: false, playlists: false, tracks: false, albums: false });
   const [openedPlaylist, setOpenedPlaylist] = useState<ProviderPlaylist | null>(null);
   const [playlistError, setPlaylistError] = useState("");
+  // The input keeps a local draft; results only refresh when the user
+  // commits a search (Enter key, the search button, or a history chip), so
+  // typing one character no longer reshuffles the list mid-word.
+  const [draft, setDraft] = useState(controls.searchQuery);
   useEffect(() => { localStorage.setItem("aria-search-history", JSON.stringify(history)); }, [history]);
-  const remember = () => setHistory((current) => rememberSearch(current, controls.searchQuery));
   const {
     searchQuery,
     setSearchQuery,
@@ -1118,6 +1121,17 @@ export function SearchScreen(controls: MobileControls) {
     likedTrackIds,
     neteaseLikedIds,
   } = controls;
+  function submitSearch(raw?: string) {
+    const value = (raw ?? draft).trim();
+    if (!value) {
+      setDraft("");
+      setSearchQuery("");
+      return;
+    }
+    setDraft(value);
+    if (value !== searchQuery) setSearchQuery(value);
+    setHistory((current) => rememberSearch(current, value));
+  }
   const hasQuery = searchQuery.trim().length > 0;
   const trackResults = useMemo(() => {
     const seen = new Set<string>();
@@ -1166,17 +1180,39 @@ export function SearchScreen(controls: MobileControls) {
 
   return (
     <div className="pb-4">
-      <PageHeader eyebrow="Discover" title="搜索" description="搜索歌曲、歌手、歌单、专辑，或从历史记录继续。" />
-      <input
-        value={searchQuery}
-        onChange={(event) => setSearchQuery(event.target.value)}
-        onKeyDown={(event) => { if (event.key === "Enter") { remember(); event.currentTarget.blur(); } }}
-        onBlur={remember}
-        enterKeyHint="search"
-        aria-label="搜索音乐"
-        placeholder="搜索歌曲、歌手、歌单、专辑…"
-        className="mt-3 w-full rounded-[1rem] border border-neutral-950/10 bg-white/80 px-4 py-3 text-sm outline-none transition focus:border-neutral-950/40"
-      />
+      <PageHeader eyebrow="Discover" title="搜索" description="输入关键词后按回车或点「搜索」开始。" />
+      <div className="mt-3 flex items-center gap-2 rounded-[1rem] border border-neutral-950/10 bg-white/80 px-3 py-2 transition focus-within:border-neutral-950/40">
+        <Search className="size-4 shrink-0 text-neutral-400" />
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter") { event.currentTarget.blur(); submitSearch(); } }}
+          enterKeyHint="search"
+          aria-label="搜索音乐"
+          placeholder="搜索歌曲、歌手、歌单、专辑…"
+          className="min-w-0 flex-1 bg-transparent py-1 text-sm outline-none placeholder:text-neutral-400"
+        />
+        {draft && (
+          <button
+            type="button"
+            onClick={() => { setDraft(""); setSearchQuery(""); }}
+            className="tap-scale flex size-8 shrink-0 items-center justify-center rounded-full"
+            aria-label="清空搜索词"
+          >
+            <X className="size-4 text-neutral-400" />
+          </button>
+        )}
+        {draft.trim() && (
+          <button
+            type="button"
+            onClick={() => submitSearch()}
+            className="tap-scale shrink-0 rounded-full bg-neutral-950 px-3.5 py-1.5 text-xs font-medium text-white"
+            aria-label="搜索"
+          >
+            搜索
+          </button>
+        )}
+      </div>
 
       {!hasQuery && (
         <>
@@ -1194,7 +1230,7 @@ export function SearchScreen(controls: MobileControls) {
                 <button
                   key={query}
                   type="button"
-                  onClick={() => { setSearchQuery(query); setHistory((current) => rememberSearch(current, query)); }}
+                  onClick={() => submitSearch(query)}
                   className="tap-scale max-w-full truncate rounded-full border border-white/75 bg-white/70 px-3.5 py-1.5 text-xs text-neutral-600 shadow-sm"
                 >
                   {query}
@@ -1377,6 +1413,8 @@ export function SettingsScreen(controls: MobileControls) {
     localTracks,
     refreshNeteaseData,
     disconnect,
+    kaleidoscopeEnabled,
+    setKaleidoscopeEnabled,
   } = controls;
   const [refreshing, setRefreshing] = useState(false);
 
@@ -1391,125 +1429,114 @@ export function SettingsScreen(controls: MobileControls) {
 
   return (
     <div className="space-y-4 pb-4">
-      <PageHeader eyebrow="Settings" title="设置" description="账号、播放、后台运行与连接。" />
+      <PageHeader eyebrow="Settings" title="设置" description="账号、播放页外观、缓存与连接。" />
 
       {controls.directMode ? (
         <DirectNeteaseCard controls={controls} />
       ) : (
-      <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Account</p>
-            <h3 className="mt-1 text-base font-semibold">网易云账号</h3>
-          </div>
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={refreshing}
-            className="tap-scale flex size-9 items-center justify-center rounded-full bg-white shadow-sm disabled:opacity-50"
-            aria-label="刷新数据"
-          >
-            <RefreshCw className={`size-4 text-neutral-600 ${refreshing ? "animate-spin" : ""}`} />
-          </button>
-        </div>
-        <div className="mt-3 flex items-center gap-3 rounded-[1rem] bg-neutral-950/[0.03] p-3">
-          {neteaseAccount?.avatarUrl ? (
-            <img src={neteaseAccount.avatarUrl} alt="" className="size-11 rounded-full object-cover" />
-          ) : (
-            <div className="flex size-11 items-center justify-center rounded-full bg-white shadow-sm">
-              <UserRound className="size-5 text-neutral-400" />
-            </div>
-          )}
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">
-              {neteaseAccount?.connected ? neteaseAccount.nickname ?? "网易云账号" : "未登录"}
-            </p>
-            <p className="mt-0.5 truncate text-xs text-neutral-500">
-              {neteaseAccount?.connected ? "扫码登录在桌面端完成,数据自动同步" : "请在桌面端设置里扫码登录"}
-            </p>
-          </div>
-        </div>
-      </section>
+        <SettingsGroup title="账号" description="网易云账号由桌面端扫码登录，数据自动同步。">
+          <SettingsRow
+            icon={
+              neteaseAccount?.avatarUrl ? (
+                <img src={neteaseAccount.avatarUrl} alt="" className="size-9 rounded-full object-cover" />
+              ) : (
+                <UserRound className="size-4" />
+              )
+            }
+            title={neteaseAccount?.connected ? neteaseAccount.nickname ?? "网易云账号" : "未登录"}
+            description={neteaseAccount?.connected ? "扫码登录在桌面端完成，数据自动同步" : "请在桌面端设置里扫码登录"}
+            right={
+              <button
+                type="button"
+                onClick={refresh}
+                disabled={refreshing}
+                className="tap-scale flex size-9 items-center justify-center rounded-full bg-white shadow-sm disabled:opacity-50"
+                aria-label="刷新数据"
+              >
+                <RefreshCw className={`size-4 text-neutral-600 ${refreshing ? "animate-spin" : ""}`} />
+              </button>
+            }
+          />
+        </SettingsGroup>
       )}
 
-      {isNativeApp() && <LockScreenSettings />}
-      {isNativeApp() && <BackgroundPlaybackSettings />}
+      <SettingsGroup title="播放页" description="正在播放页的视觉样式。">
+        <SettingsRow
+          icon={<Immersive className="size-4" />}
+          title="万花筒背景"
+          description="封面生成旋转对称的动态图案，播放时缓缓转动"
+          right={
+            <Toggle
+              checked={kaleidoscopeEnabled}
+              onChange={() => setKaleidoscopeEnabled(!kaleidoscopeEnabled)}
+              label="万花筒背景"
+            />
+          }
+        />
+      </SettingsGroup>
+
       <CacheSettings controls={controls} />
 
-      {isNativeApp() && (
-        <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <Usb className="mt-0.5 size-4 text-neutral-500" />
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Output</p>
-              <h3 className="mt-1 text-base font-semibold">USB 音频焦点（实验）</h3>
-              <p className="mt-1 text-xs leading-5 text-neutral-500">
-                {controls.usbExclusive.connected ? "已检测到 USB 音频设备，播放时优先占用音频焦点。" : "连接 USB 音频设备后可启用，减少其他应用抢占。"}
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={controls.usbExclusive.enabled}
-              disabled={!controls.usbExclusive.supported || !controls.usbExclusive.connected}
-              onClick={() => void controls.setUsbExclusiveEnabled(!controls.usbExclusive.enabled)}
-              className={`flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition disabled:opacity-40 ${controls.usbExclusive.enabled ? "bg-neutral-950" : "bg-neutral-200"}`}
-              aria-label="USB 独占"
-            >
-              <span className={`size-5 rounded-full bg-white shadow-sm transition ${controls.usbExclusive.enabled ? "translate-x-5" : ""}`} />
-            </button>
-          </div>
-        </section>
-      )}
-
       {!controls.directMode && (
-      <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Connection</p>
-        <h3 className="mt-1 text-base font-semibold">桌面端连接</h3>
-        <div className="mt-3 space-y-2 text-xs text-neutral-600">
-          <p className="flex items-center gap-2 break-all font-mono">
-            <Server className="size-3.5 shrink-0 text-neutral-400" />
-            {connection.serverUrl || "未连接"}
-          </p>
-          <p className="flex items-center gap-2">
-            <Wifi className="size-3.5 shrink-0 text-neutral-400" />
-            本地曲库 {localTracks.length} 首 · {libraryMeta.roots} 个目录
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={disconnect}
-          className="tap-scale mt-3 flex w-full items-center justify-center gap-2 rounded-[1rem] bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600"
-        >
-          <LogOut className="size-4" />
-          断开连接
-        </button>
-      </section>
+        <SettingsGroup title="连接" description="与桌面端共用曲库（仅限局域网）。">
+          <SettingsRow
+            icon={<Server className="size-4" />}
+            title="桌面端服务器"
+            description={connection.serverUrl || "未连接"}
+          />
+          <SettingsRow
+            icon={<Wifi className="size-4" />}
+            title="本地曲库"
+            description={`${localTracks.length} 首 · ${libraryMeta.roots} 个目录`}
+          />
+          <button
+            type="button"
+            onClick={disconnect}
+            className="tap-scale mt-2 flex w-full items-center justify-center gap-2 rounded-[0.9rem] bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-600"
+          >
+            <LogOut className="size-4" />
+            断开连接
+          </button>
+        </SettingsGroup>
       )}
 
-      <Surface className="text-center">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">About</p>
-        <p className="mt-1 text-sm font-semibold">Aria Mobile</p>
-        <p className="mt-0.5 text-[11px] text-neutral-500">
-          v{APP_VERSION} · {controls.directMode ? "手机直连网易云" : "桌面伴侣模式"}
-        </p>
-        <p className="mt-2 text-[10px] leading-4 text-neutral-400">
-          播放凭据只保存在本机，不上传服务器。
-        </p>
-        <a
-          href="https://github.com/YRRLYB/Aria-Mobile"
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => {
-            event.preventDefault();
-            void openExternal("https://github.com/YRRLYB/Aria-Mobile");
-          }}
-          className="tap-scale mt-3 inline-flex items-center gap-1.5 rounded-full bg-neutral-950/[0.05] px-3 py-1.5 text-[11px] font-medium text-neutral-600"
-        >
-          <ExternalLink className="size-3.5" />
-          GitHub 仓库
-        </a>
-      </Surface>
+      {isNativeApp() && (
+        <SettingsGroup title="系统" description="锁屏、后台运行与音频输出。">
+          <LockScreenSettings />
+          <BackgroundPlaybackSettings />
+          <SettingsRow
+            icon={<Usb className="size-4" />}
+            title="USB 音频焦点"
+            description={
+              controls.usbExclusive.connected
+                ? "已检测到 USB 音频设备，播放时优先占用音频焦点。"
+                : "连接 USB 音频设备后可启用（实验），减少其他应用抢占。"
+            }
+            right={
+              <Toggle
+                checked={controls.usbExclusive.enabled}
+                disabled={!controls.usbExclusive.supported || !controls.usbExclusive.connected}
+                onChange={() => void controls.setUsbExclusiveEnabled(!controls.usbExclusive.enabled)}
+                label="USB 独占"
+              />
+            }
+          />
+        </SettingsGroup>
+      )}
+
+      <SettingsGroup title="关于">
+        <SettingsRow
+          title="Aria Mobile"
+          description={`v${APP_VERSION} · ${controls.directMode ? "手机直连网易云" : "桌面伴侣模式"} · 播放凭据只保存在本机`}
+        />
+        <SettingsRow
+          icon={<ExternalLink className="size-4" />}
+          title="GitHub 仓库"
+          description="github.com/YRRLYB/Aria-Mobile"
+          onClick={() => void openExternal("https://github.com/YRRLYB/Aria-Mobile")}
+          right={<ChevronRight className="size-4 text-neutral-400" />}
+        />
+      </SettingsGroup>
     </div>
   );
 }
@@ -1529,12 +1556,7 @@ function BackgroundPlaybackSettings() {
     }
   }
   return (
-    <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Background</p>
-      <h3 className="mt-1 text-base font-semibold">后台播放保护</h3>
-      <p className="mt-1 text-xs leading-5 text-neutral-500">
-        允许 Aria 忽略电池优化，并给它「不限制」后台运行权限，可减少锁屏后系统停止播放。
-      </p>
+    <SettingsRow title="后台播放保护" description="允许忽略电池优化并「不限制」后台运行，减少锁屏后系统停止播放。">
       <div className="mt-3 flex gap-2">
         <button
           type="button"
@@ -1552,7 +1574,7 @@ function BackgroundPlaybackSettings() {
         </button>
       </div>
       {hint && <p role="status" className="mt-2 text-[11px] leading-4 text-neutral-500">{hint}</p>}
-    </section>
+    </SettingsRow>
   );
 }
 
@@ -1630,21 +1652,15 @@ function CacheSettings({ controls }: { controls: MobileControls }) {
   }
 
   return (
-    <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Storage</p>
-      <h3 className="mt-1 text-base font-semibold">缓存管理</h3>
-      <div className="mt-3 divide-y divide-neutral-950/[0.05]">
-        <div className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-950/[0.04]">
-            <Disc3 className="size-4 text-neutral-500" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">封面缓存</p>
-            <p className="mt-0.5 truncate text-[11px] text-neutral-500">
-              {coverStats.entries} 张 · {formatCacheSize(coverStats.bytes)}
-              {coverStats.memoryEntries ? ` · ${coverStats.memoryEntries} 张内存副本` : ""}
-            </p>
-          </div>
+    <SettingsGroup
+      title="缓存管理"
+      description="封面缓存加快加载，音频缓存保留最近播放片段（最多 128 MB）；清理不会删除离线下载。"
+    >
+      <SettingsRow
+        icon={<Disc3 className="size-4" />}
+        title="封面缓存"
+        description={`${coverStats.entries} 张 · ${formatCacheSize(coverStats.bytes)}${coverStats.memoryEntries ? ` · ${coverStats.memoryEntries} 张内存副本` : ""}`}
+        right={
           <button
             type="button"
             onClick={() => void clearCovers()}
@@ -1653,19 +1669,14 @@ function CacheSettings({ controls }: { controls: MobileControls }) {
           >
             {busy === "cover" ? "清理中…" : "清理"}
           </button>
-        </div>
-        {native && (
-          <div className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-950/[0.04]">
-              <Download className="size-4 text-neutral-500" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">音频缓存</p>
-              <p className="mt-0.5 truncate text-[11px] text-neutral-500">
-                {audioStats ? `${formatCacheSize(audioStats.bytes)} / 128 MB` : "读取中…"}
-                {audioStats && audioStats.files > 0 ? ` · ${audioStats.files} 个文件` : ""}
-              </p>
-            </div>
+        }
+      />
+      {native && (
+        <SettingsRow
+          icon={<Download className="size-4" />}
+          title="音频缓存"
+          description={audioStats ? `${formatCacheSize(audioStats.bytes)} / 128 MB${audioStats.files > 0 ? ` · ${audioStats.files} 个文件` : ""}` : "读取中…"}
+          right={
             <button
               type="button"
               onClick={() => void clearAudio()}
@@ -1674,14 +1685,11 @@ function CacheSettings({ controls }: { controls: MobileControls }) {
             >
               {busy === "audio" ? "清理中…" : "清空"}
             </button>
-          </div>
-        )}
-      </div>
-      <p className="mt-3 text-[11px] leading-4 text-neutral-400">
-        封面缓存加快列表和播放页加载；音频缓存保留最近播放的片段，最多 128 MB。清理不会删除离线下载。
-      </p>
-      {message && <p role="status" className="mt-2 text-[11px] text-neutral-500">{message}</p>}
-    </section>
+          }
+        />
+      )}
+      {message && <p role="status" className="pb-1 pt-2 text-[11px] text-neutral-500">{message}</p>}
+    </SettingsGroup>
   );
 }
 
@@ -1703,16 +1711,37 @@ function LockScreenSettings() {
       setError("");
     } catch { setError("无法保存锁屏设置，请重试"); }
   }
-  return <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-    <button role="switch" aria-checked={settings.enabled} onClick={() => void toggle()} className="flex w-full items-center justify-between gap-4 text-left">
-      <span><span className="block text-base font-semibold">音乐锁屏</span><span className="mt-1 block text-xs text-neutral-500">播放时亮屏，直接显示封面、歌词和控制</span></span>
-      <span className={`flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition ${settings.enabled ? "bg-neutral-950" : "bg-neutral-200"}`}><span className={`size-5 rounded-full bg-white transition ${settings.enabled ? "translate-x-5" : ""}`} /></span>
-    </button>
-    {settings.enabled && !settings.permission && <button onClick={() => void AriaAudio.openLockScreenPermission().catch(() => setError("无法打开系统设置"))} className="mt-4 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm text-white">允许锁屏显示</button>}
-    {settings.enabled && <button onClick={() => void AriaAudio.openLockScreenAppSettings().catch(() => setError("无法打开应用权限设置"))} className="mt-3 w-full rounded-xl bg-neutral-950/5 px-4 py-3 text-sm">设置锁屏与后台权限</button>}
-    {settings.enabled && <p className="mt-3 text-xs leading-relaxed text-neutral-500">{settings.permission ? "已允许显示。播放歌曲后锁屏，再亮屏即可查看。" : "请在系统页面允许 Aria 显示在其他应用上层。"} 部分手机还需在应用权限中允许「锁屏显示」和「后台弹出界面」。上滑仍使用手机原有解锁方式。</p>}
-    {error && <p role="alert" className="mt-2 text-xs text-rose-600">{error}</p>}
-  </section>;
+  return (
+    <SettingsRow
+      title="音乐锁屏"
+      description="播放时亮屏，直接显示封面、歌词和控制"
+      right={<Toggle checked={settings.enabled} onChange={() => void toggle()} label="音乐锁屏" />}
+    >
+      {settings.enabled && (
+        <div className="mt-3 space-y-2">
+          {!settings.permission && (
+            <button
+              onClick={() => void AriaAudio.openLockScreenPermission().catch(() => setError("无法打开系统设置"))}
+              className="w-full rounded-[0.9rem] bg-neutral-950 px-4 py-2.5 text-sm text-white"
+            >
+              允许锁屏显示
+            </button>
+          )}
+          <button
+            onClick={() => void AriaAudio.openLockScreenAppSettings().catch(() => setError("无法打开应用权限设置"))}
+            className="w-full rounded-[0.9rem] bg-neutral-950/5 px-4 py-2.5 text-sm"
+          >
+            设置锁屏与后台权限
+          </button>
+          <p className="text-[11px] leading-4 text-neutral-500">
+            {settings.permission ? "已允许显示。播放歌曲后锁屏，再亮屏即可查看。" : "请在系统页面允许 Aria 显示在其他应用上层。"}{" "}
+            部分手机还需在应用权限中允许「锁屏显示」和「后台弹出界面」。上滑仍使用手机原有解锁方式。
+          </p>
+        </div>
+      )}
+      {error && <p role="alert" className="mt-2 text-xs text-rose-600">{error}</p>}
+    </SettingsRow>
+  );
 }
 
 function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
@@ -1894,54 +1923,51 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
   const connected = Boolean(account?.connected);
 
   return (
-    <section className="rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Account</p>
-          <h3 className="mt-1 text-base font-semibold">网易云直连</h3>
-        </div>
-        <button
-          type="button"
-          onClick={refresh}
-          className="tap-scale flex size-9 items-center justify-center rounded-full bg-white shadow-sm"
-          aria-label="刷新登录状态"
-        >
-          <RefreshCw className="size-4 text-neutral-600" />
-        </button>
-      </div>
-
-      <div className="mt-3 flex items-center gap-3 rounded-[1rem] bg-neutral-950/[0.03] p-3">
-        {connected && account?.avatarUrl ? (
-          <img src={account.avatarUrl} alt="" className="size-11 rounded-full object-cover" />
-        ) : (
-          <div className="flex size-11 items-center justify-center rounded-full bg-white shadow-sm">
-            <UserRound className="size-5 text-neutral-400" />
+    <SettingsGroup title="网易云直连" description={connected ? "手机直连网易云，不依赖电脑。" : "登录后无需电脑即可听网易云。"}>
+      <SettingsRow
+        icon={
+          connected && account?.avatarUrl ? (
+            <img src={account.avatarUrl} alt="" className="size-9 rounded-full object-cover" />
+          ) : (
+            <UserRound className="size-4" />
+          )
+        }
+        title={connected ? account?.nickname ?? "网易云账号" : qr ? "扫码后在手机上确认" : "未登录"}
+        description={
+          connected
+            ? account?.cookiePreview || "本机会话 · 直连"
+            : qr
+              ? "打开网易云 App 扫一扫，对准此码即可"
+              : "使用短信验证码或二维码登录"
+        }
+        right={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={refresh}
+              className="tap-scale flex size-9 items-center justify-center rounded-full bg-white shadow-sm"
+              aria-label="刷新登录状态"
+            >
+              <RefreshCw className="size-4 text-neutral-600" />
+            </button>
+            {connected && (
+              <button
+                type="button"
+                onClick={() => {
+                  directLogout();
+                  const nextAccount = { connected: false, nickname: null, userId: null, avatarUrl: null, cookiePreview: null } satisfies NeteaseAccountSummary;
+                  setAccount(nextAccount);
+                  controls.setNeteaseAccount(nextAccount);
+                  controls.refreshNeteaseData();
+                }}
+                className="tap-scale rounded-full bg-white px-3 py-1.5 text-xs text-rose-600 shadow-sm"
+              >
+                退出
+              </button>
+            )}
           </div>
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">
-            {connected ? account?.nickname ?? "网易云账号" : "未登录"}
-          </p>
-          <p className="mt-0.5 truncate text-xs text-neutral-500">
-            {connected ? "手机直连网易云,不依赖电脑" : qr ? "扫码后在手机上确认" : "登录后无需电脑即可听网易云"}
-          </p>
-        </div>
-        {connected && (
-          <button
-            type="button"
-            onClick={() => {
-              directLogout();
-              const nextAccount = { connected: false, nickname: null, userId: null, avatarUrl: null, cookiePreview: null } satisfies NeteaseAccountSummary;
-              setAccount(nextAccount);
-              controls.setNeteaseAccount(nextAccount);
-              controls.refreshNeteaseData();
-            }}
-            className="tap-scale rounded-full bg-white px-3 py-1.5 text-xs text-rose-600 shadow-sm"
-          >
-            退出
-          </button>
-        )}
-      </div>
+        }
+      />
 
       {!connected && (
         <div className="mt-3 rounded-[1rem] bg-white/70 p-4">
@@ -2016,17 +2042,20 @@ function DirectNeteaseCard({ controls }: { controls: MobileControls }) {
         </div>
       )}
 
-      <div className="mt-3 flex items-center justify-between gap-3 rounded-[1rem] bg-neutral-950/[0.03] p-3">
-        <p className="text-xs leading-5 text-neutral-500">当前为直连模式(不依赖电脑)。桌面模式可串流电脑曲库。</p>
-        <button
-          type="button"
-          onClick={controls.switchToDesktopMode}
-          className="tap-scale shrink-0 rounded-full bg-white px-3 py-1.5 text-xs text-neutral-600 shadow-sm"
-        >
-          切换桌面模式
-        </button>
-      </div>
-    </section>
+      <SettingsRow
+        title="切换桌面模式"
+        description="直连模式不依赖电脑；桌面模式可串流电脑曲库（仅限局域网）。"
+        right={
+          <button
+            type="button"
+            onClick={controls.switchToDesktopMode}
+            className="tap-scale shrink-0 rounded-full bg-white px-3 py-1.5 text-xs text-neutral-600 shadow-sm"
+          >
+            切换
+          </button>
+        }
+      />
+    </SettingsGroup>
   );
 }
 

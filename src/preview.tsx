@@ -1,4 +1,4 @@
-import { StrictMode, type CSSProperties } from "react";
+import { StrictMode, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import "@/index.css";
 import "./mobile.css";
@@ -251,6 +251,7 @@ const controls = {
   libraryMeta: { roots: 2, updatedAt: new Date().toISOString() },
   connection: { serverUrl: "http://192.168.1.29:3636", token: "aria-demo-token" },
   searchQuery: "夜",
+  kaleidoscopeEnabled: true,
   chooseTrack: noop,
   playShuffledTracks: noop,
   playPlaylist: noop,
@@ -273,6 +274,7 @@ const controls = {
   refreshRoamData: async () => undefined,
   setSelectedArtist: noop,
   setSearchQuery: noop,
+  setKaleidoscopeEnabled: noop,
   setHifiEnabled: noop,
   setQualityLevel: noop,
   openNowPlaying: noop,
@@ -300,8 +302,26 @@ const searchControls = searchQueryParam === null ? controls : {
 };
 
 function Page() {
+  // Interactive like state on the player page so the pulse animation can be
+  // exercised in the preview harness (the mock active track is netease-source,
+  // whose liked flag comes from neteaseLikedIds).
+  const [likedIds, setLikedIds] = useState<Record<string, true>>(controls.neteaseLikedIds);
   if (page === "player") {
-    return <NowPlaying {...controls} onClose={noop} />;
+    return (
+      <NowPlaying
+        {...controls}
+        neteaseLikedIds={likedIds}
+        toggleLikeTrack={(trackId: string) =>
+          setLikedIds((current) => {
+            const next = { ...current };
+            if (next[trackId]) delete next[trackId];
+            else next[trackId] = true;
+            return next;
+          })
+        }
+        onClose={noop}
+      />
+    );
   }
   if (page === "connect") {
     return <ConnectScreen onConnected={noop} />;
