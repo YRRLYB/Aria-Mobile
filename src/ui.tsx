@@ -85,10 +85,10 @@ export function SettingsGroup({
   className?: string;
 }) {
   return (
-    <section className={cn("rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm backdrop-blur", className)}>
-      <h3 className="text-sm font-semibold text-neutral-800">{title}</h3>
-      {description && <p className="mt-0.5 text-[11px] leading-4 text-neutral-500">{description}</p>}
-      <div className="mt-2 divide-y divide-neutral-950/[0.05]">{children}</div>
+    <section className={cn("mt-5 first:mt-0", className)}>
+      <h3 className="px-1 text-[13px] font-bold text-neutral-950">{title}</h3>
+      {description && <p className="mt-0.5 px-1 text-[11px] leading-4 text-neutral-500">{description}</p>}
+      <div className="mt-1 divide-y divide-neutral-950/[0.06]">{children}</div>
     </section>
   );
 }
@@ -107,10 +107,8 @@ export function PageHeader({
   return (
     <header className="flex items-start justify-between gap-3">
       <div className="min-w-0">
-        {eyebrow && (
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">{eyebrow}</p>
-        )}
-        <h1 className={cn("truncate text-xl font-semibold tracking-tight", eyebrow && "mt-1")}>{title}</h1>
+        {eyebrow && <p className="text-xs font-medium text-neutral-400">{eyebrow}</p>}
+        <h1 className={cn("text-[1.7rem] font-bold leading-tight tracking-tight text-neutral-950", eyebrow && "mt-0.5")}>{title}</h1>
         {description && <div className="mt-1 text-xs leading-5 text-neutral-500">{description}</div>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
@@ -120,7 +118,7 @@ export function PageHeader({
 
 export function Surface({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <section className={cn("rounded-[1.2rem] border border-white/75 bg-white/62 p-4 shadow-sm backdrop-blur", className)}>
+    <section className={cn("rounded-[1.2rem] border border-neutral-950/[0.07] bg-white p-4", className)}>
       {children}
     </section>
   );
@@ -230,13 +228,13 @@ export function DetailHeader({
           <ChevronRight className="size-4 rotate-180" />
           {backLabel}
         </button>
-        <div className="flex items-center gap-4 rounded-[1.35rem] border border-white/75 bg-white/62 p-4 shadow-sm">
+        <div className="flex items-start gap-4">
           {visual}
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">{label}</p>
-            <h1 className="mt-1 line-clamp-2 text-lg font-semibold leading-snug">{title}</h1>
-            <div className="mt-1 text-xs text-neutral-500">{meta}</div>
-            {actions && <div className="mt-3 flex items-center gap-2">{actions}</div>}
+          <div className="min-w-0 flex-1 pt-1">
+            <p className="text-xs font-bold text-rose-500">{label}</p>
+            <h1 className="mt-1 line-clamp-2 text-[1.55rem] font-bold leading-tight tracking-tight text-neutral-950">{title}</h1>
+            <div className="mt-1.5 text-xs text-neutral-500">{meta}</div>
+            {actions && <div className="mt-3.5 flex items-center gap-2">{actions}</div>}
           </div>
         </div>
       </div>

@@ -156,15 +156,15 @@ function HorizontalTrackCard({
     <button
       type="button"
       onClick={onPlay}
-      className="tap-scale w-28 shrink-0 text-center"
+      className="tap-scale w-36 shrink-0 text-left"
     >
       {/* Content covers are rounded squares; circles are reserved for avatars
           and the spinning disc of the playing track. */}
-      <div className={`overflow-hidden rounded-[0.9rem] shadow-[0_10px_26px_rgba(47,55,76,0.16)] ring-1 ring-black/5 ${active ? "ring-2 ring-neutral-950" : ""}`}>
+      <div className={`overflow-hidden rounded-[1.1rem] shadow-[0_12px_30px_rgba(47,55,76,0.18)] ring-1 ring-black/5 ${active ? "ring-2 ring-neutral-950" : ""}`}>
         <TrackCover track={track} className="aspect-square w-full" />
       </div>
-      <p className="mt-1.5 truncate text-xs font-semibold text-neutral-900">{track.title}</p>
-      <p className="truncate text-[11px] text-neutral-500">{track.artist}</p>
+      <p className="mt-2 truncate text-[0.95rem] font-bold text-neutral-950">{track.title}</p>
+      <p className="mt-0.5 truncate text-xs text-neutral-500">{track.artist}</p>
     </button>
   );
 }
@@ -216,99 +216,129 @@ export function HomeScreen(controls: MobileControls) {
     const weekStart = todayStart - 6 * 86_400_000;
     return new Set(controls.playHistory.filter((entry) => entry.playedAt >= weekStart).map((entry) => entry.track.id)).size;
   }, [controls.playHistory, todayStart]);
+  const daily = dailyTracks.slice(0, 5);
+  const roamFirst = roamTracks[0];
+
   return (
     <div className="pb-4">
-      <PageHeader
-        eyebrow="我的音乐"
-        title={neteaseAccount?.connected ? `你好，${neteaseAccount.nickname ?? "听众"}` : "音乐从这里开始"}
-        description={neteaseAccount?.connected ? "继续听你喜欢的音乐吧。" : "连接桌面端或登录网易云，开始你的音乐空间。"}
-        action={neteaseAccount?.avatarUrl
-          ? <img src={neteaseAccount.avatarUrl} alt="" className="size-10 shrink-0 rounded-full object-cover shadow-sm" />
-          : <span className="flex size-10 items-center justify-center rounded-full bg-white/70 text-neutral-400 shadow-sm"><UserRound className="size-5" /></span>}
-      />
-
-      {/* 我喜欢：玫瑰色调紧凑条，唯一的红色焦点 */}
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => openCollection("liked")}
-        onKeyDown={(event) => { if (event.key === "Enter") openCollection("liked"); }}
-        className="aria-rise mt-2 flex items-center gap-4 rounded-[1rem] px-2.5 py-3.5 transition active:bg-neutral-950/[0.04]"
-      >
-        <span className="flex size-14 shrink-0 items-center justify-center rounded-[0.9rem] bg-rose-500 text-white shadow-[0_8px_22px_rgba(244,63,94,0.32)]">
-          <Heart className="size-6 fill-current" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-base font-bold text-neutral-950">我喜欢的音乐</span>
-          <span className="block truncate text-xs text-neutral-500">
-            {likedTracks.length} 首 · 按收藏时间排序
-          </span>
-        </span>
-        <span
-          role="button"
-          tabIndex={0}
-          aria-label="播放我喜欢的音乐"
-          onClick={(event) => {
-            event.stopPropagation();
-            if (likedTracks[0]) chooseTrack(likedTracks[0].id, likedTracks);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.stopPropagation();
-              if (likedTracks[0]) chooseTrack(likedTracks[0].id, likedTracks);
-            }
-          }}
-          className="tap-scale flex size-12 shrink-0 items-center justify-center rounded-full bg-neutral-950 text-white"
-        >
-          <Play className="size-5 translate-x-[1px]" />
-        </span>
+      {/* 问候 */}
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <h1 className="truncate text-[1.7rem] font-bold tracking-tight text-neutral-950">
+          {neteaseAccount?.connected
+          ? neteaseAccount.nickname
+            ? `你好，${neteaseAccount.nickname}`
+            : "你好"
+          : "音乐从这里开始"}
+        </h1>
+        {neteaseAccount?.avatarUrl
+          ? <img src={neteaseAccount.avatarUrl} alt="" className="size-11 shrink-0 rounded-full object-cover shadow-sm" />
+          : <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/70 text-neutral-400 shadow-sm"><UserRound className="size-5" /></span>}
       </div>
-      <div className="mx-2 mb-1 h-px bg-neutral-950/[0.06]" aria-hidden />
 
-      {/* 快捷双卡：翡翠/靛蓝两种色调 */}
-      <div className="aria-rise aria-rise-1 mt-1 grid grid-cols-2 gap-2.5">
+      {/* 我喜欢的音乐：大封面 + 超大数字 + 黑色播放圆钮 */}
+      <div className="aria-rise mt-7 flex items-center gap-4">
+        <button
+          type="button"
+          onClick={() => openCollection("liked")}
+          className="block size-[6.25rem] shrink-0 overflow-hidden rounded-[1.4rem] shadow-[0_14px_36px_rgba(47,55,76,0.24)] ring-1 ring-black/5 transition active:scale-[0.98]"
+          aria-label="查看我喜欢的音乐"
+        >
+          {likedTracks[0] ? (
+            <TrackCover track={likedTracks[0]} className="size-full" priority />
+          ) : (
+            <span className="flex size-full items-center justify-center bg-rose-50 text-rose-300">
+              <Heart className="size-9 fill-current" />
+            </span>
+          )}
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[0.95rem] font-bold text-rose-500">我喜欢的音乐</p>
+          <p className="mt-1 text-[2.1rem] font-extrabold leading-none tracking-tight text-neutral-950">
+            {likedTracks.length} <span className="text-lg font-bold">首</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => likedTracks[0] && chooseTrack(likedTracks[0].id, likedTracks)}
+          disabled={!likedTracks.length}
+          aria-label="播放我喜欢的音乐"
+          className="tap-scale flex size-14 shrink-0 items-center justify-center rounded-full bg-neutral-950 text-white shadow-[0_12px_30px_rgba(23,23,23,0.32)] transition active:scale-95 disabled:opacity-40"
+        >
+          <Play className="size-6 translate-x-[1px]" />
+        </button>
+      </div>
+
+      {/* 纯文字统计排：最近播放 | 本周播放次数 */}
+      <div className="mt-6 flex items-stretch">
         <button
           type="button"
           onClick={() => openCollection("history")}
-          className="tap-scale flex min-w-0 flex-col rounded-[1.1rem] border border-neutral-950/[0.07] bg-white p-3.5 text-left"
+          className="min-w-0 flex-1 text-left"
         >
-          <span className="flex size-8 items-center justify-center rounded-[0.65rem] bg-neutral-950 text-white">
-            <History className="size-4" />
-          </span>
-          <span className="mt-2.5 block text-sm font-bold text-neutral-950">最近播放</span>
-          <span className="mt-0.5 block truncate text-xs text-neutral-500">
-            {recentTracks.length ? `${recentTracks.length} 首 · ${recentTracks[0]?.title ?? ""}` : "还没有播放记录"}
-          </span>
+          <p className="text-xs text-neutral-500">最近播放</p>
+          <p className="mt-1 flex items-center text-[1.45rem] font-bold tracking-tight text-neutral-950">
+            {recentTracks.length} 首
+            <ChevronRight className="ml-1 size-4 text-neutral-400" />
+          </p>
         </button>
-        <div className="flex min-w-0 flex-col rounded-[1.1rem] border border-neutral-950/[0.07] bg-white p-3.5">
-          <span className="text-xs font-medium text-neutral-500">今日聆听</span>
-          <span className="mt-1 text-xl font-bold tabular-nums tracking-tight text-neutral-950">{weekCount} <span className="text-sm font-semibold">首</span></span>
-          <span className="mt-0.5 block truncate text-xs text-neutral-500">
-            本周 · 今日 {todayListening.count} 首
-          </span>
+        <div className="w-px bg-neutral-950/10" aria-hidden />
+        <div className="min-w-0 flex-1 pl-6">
+          <p className="text-xs text-neutral-500">本周播放次数</p>
+          <p className="mt-1 text-[1.45rem] font-bold tracking-tight text-neutral-950">{weekCount} 首</p>
         </div>
       </div>
 
-      {([
-        { id: "daily" as const, title: "每日推荐", tracks: dailyTracks, Icon: Compass },
-        { id: "roam" as const, title: "私人漫游", tracks: roamTracks, Icon: Radar },
-      ]).map(({ id, title, tracks, Icon }) => (
-        <section key={id} className="aria-rise aria-rise-2">
-          <SectionHeader title={title} Icon={Icon} action={
-            <button onClick={() => openCollection(id)} aria-label={`查看全部${title}`} title={`查看全部${title}`} className="flex size-9 items-center justify-center"><ChevronRight className="size-5" /></button>
-          } />
-          <div className="no-scrollbar -mx-4 flex items-start gap-3 overflow-x-auto px-4 pb-1">
-            {tracks.slice(0, 5).map((track, index) => (
-              <div key={track.id} className={index % 2 === 1 ? "mt-4" : ""}>
-                <HorizontalTrackCard track={track} active={controls.activeTrackId === track.id} onPlay={() => chooseTrack(track.id, tracks)} />
-              </div>
-            ))}
-            <button onClick={() => openCollection(id)} className={`flex w-24 shrink-0 flex-col items-center justify-center gap-1.5 rounded-[0.9rem] bg-white/60 py-4 text-xs text-neutral-500 ${tracks.length % 2 === 1 ? "mt-4" : ""}`}>
-              <ChevronRight className="size-5" />{tracks.length ? "查看全部" : "加载音乐"}
+      {/* 每日推荐 */}
+      <section className="aria-rise mt-8">
+        <button type="button" onClick={() => openCollection("daily")} className="flex w-full items-center justify-between">
+          <h2 className="text-[1.3rem] font-bold tracking-tight text-neutral-950">每日推荐</h2>
+          <ChevronRight className="size-5 text-neutral-950" />
+        </button>
+        <div className="no-scrollbar -mx-4 mt-3.5 flex gap-3.5 overflow-x-auto px-4 pb-1">
+          {daily.map((track, index) => (
+            <div key={track.id} className={index % 2 === 1 ? "mt-4" : ""}>
+              <HorizontalTrackCard track={track} active={controls.activeTrackId === track.id} onPlay={() => chooseTrack(track.id, dailyTracks)} />
+            </div>
+          ))}
+          {!daily.length && (
+            <button onClick={() => openCollection("daily")} className="flex h-16 w-full items-center justify-center rounded-[0.9rem] border border-dashed border-neutral-950/15 text-xs text-neutral-400">
+              还没有内容 · 点按加载
             </button>
-          </div>
-        </section>
-      ))}
+          )}
+        </div>
+      </section>
+
+      {/* 私人漫游：文案 + 开始漫游 + 右侧封面 */}
+      <section className="aria-rise aria-rise-2 mt-8">
+        <button type="button" onClick={() => openCollection("roam")} className="flex w-full items-center justify-between">
+          <h2 className="text-[1.3rem] font-bold tracking-tight text-neutral-950">私人漫游</h2>
+          <ChevronRight className="size-5 text-neutral-950" />
+        </button>
+        <p className="mt-1.5 text-xs text-neutral-500">根据你的口味连续推荐</p>
+        <div className="mt-4 flex items-center gap-5">
+          <button
+            type="button"
+            onClick={async () => {
+              if (roamFirst) chooseTrack(roamFirst.id, roamTracks);
+              else await controls.refreshRoamData();
+            }}
+            className="tap-scale flex h-11 shrink-0 items-center gap-2 rounded-full bg-neutral-950 px-5 text-sm font-semibold text-white shadow-[0_10px_26px_rgba(23,23,23,0.3)] transition active:scale-95"
+          >
+            <Play className="size-4" />
+            开始漫游
+          </button>
+          {roamFirst && (
+            <button
+              type="button"
+              onClick={() => openCollection("roam")}
+              className="block size-24 shrink-0 overflow-hidden rounded-[1.2rem] shadow-[0_12px_30px_rgba(47,55,76,0.22)] ring-1 ring-black/5 transition active:scale-[0.98]"
+              aria-label="查看私人漫游"
+            >
+              <TrackCover track={roamFirst} className="size-full" priority />
+            </button>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -462,33 +492,35 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
         description="喜欢的歌、专辑、手机音乐和桌面曲库都在这里。"
       />
 
-      <Surface className="mt-3 p-2">
-        <div className="grid grid-cols-4 divide-x divide-neutral-950/[0.06]">
-          {[
-            { id: "liked" as const, label: "喜欢", value: likedTracks.length, accent: "text-rose-500" },
-            { id: "albums" as const, label: "专辑", value: albums.length, accent: "text-neutral-950" },
-            { id: "artists" as const, label: "歌手", value: artists.length, accent: "text-neutral-950" },
-            { id: "playlists" as const, label: "歌单", value: controls.providerPlaylists.length, accent: "text-neutral-950" },
-          ].map((stat) => (
-            <button
-              key={stat.id}
-              type="button"
-              onClick={() => {
-                setSection(stat.id);
-                setSelectedAlbumKey(null);
-                setSelectedArtistName(null);
-              }}
-              className="tap-scale min-w-0 py-2 text-center"
-            >
-              <p className={`text-lg font-semibold tabular-nums tracking-tight ${stat.accent}`}>{stat.value}</p>
-              <p className="mt-0.5 text-xs text-neutral-500">{stat.label}</p>
-            </button>
-          ))}
-        </div>
-      </Surface>
+      <div className="mt-4 flex items-stretch">
+        {[
+          { id: "liked" as const, label: "喜欢", value: likedTracks.length },
+          { id: "albums" as const, label: "专辑", value: albums.length },
+          { id: "artists" as const, label: "歌手", value: artists.length },
+          { id: "playlists" as const, label: "歌单", value: controls.providerPlaylists.length },
+        ].map((stat, index) => (
+          <button
+            key={stat.id}
+            type="button"
+            onClick={() => {
+              setSection(stat.id);
+              setSelectedAlbumKey(null);
+              setSelectedArtistName(null);
+            }}
+            className={`tap-scale min-w-0 flex-1 text-left ${index > 0 ? "pl-5" : ""} ${index < 3 ? "" : ""}`}
+          >
+            <p className="text-xs text-neutral-500">{stat.label}</p>
+            <p className="mt-0.5 flex items-center text-[1.35rem] font-bold tracking-tight text-neutral-950">
+              {stat.value} 首
+              {stat.id === "liked" && <ChevronRight className="ml-1 size-4 text-neutral-400" />}
+            </p>
+          </button>
+        ))}
+      </div>
+      <div className="mx-0 mt-3 h-px bg-neutral-950/[0.06]" aria-hidden />
 
-      <div className="no-scrollbar sticky top-0 z-20 -mx-4 mt-4 border-b border-white/40 bg-[#f4f2f8]/92 px-4 py-2 backdrop-blur-xl">
-        <div className="flex gap-2">
+      <div className="sticky top-0 z-20 -mx-4 mt-3 px-4 py-2">
+        <div className="no-scrollbar flex gap-2 overflow-x-auto">
           {sections.map(({ id, label }) => (
             <button
               key={id}
@@ -560,7 +592,7 @@ function DeviceScanCard({
   onScan: () => void;
 }) {
   return (
-    <div className="rounded-[1rem] bg-white/60 p-4">
+    <div className="rounded-[1rem] border border-neutral-950/[0.07] bg-white p-4">
       <p className="text-xs leading-5 text-neutral-500">
         扫描手机里的音频文件,离线也能听。文件只在手机上播放,不会上传。
       </p>
@@ -670,7 +702,7 @@ function AlbumSection({ albums, onOpen }: { albums: AlbumGroup[]; onOpen: (key: 
           event.preventDefault();
           applyNow();
         }}
-        className="mb-3 flex items-center gap-2 rounded-[0.9rem] border border-white/70 bg-white/65 px-3 py-2 text-xs text-neutral-500 shadow-sm"
+        className="mb-3 flex items-center gap-2 rounded-[0.9rem] border border-neutral-950/[0.08] bg-white px-3 py-2 text-xs text-neutral-500"
       >
         <Search className="size-4 shrink-0" />
         <input
@@ -711,17 +743,17 @@ export function AlbumDetail({ album, controls, onBack, backLabel = "返回专辑
         <ChevronRight className="size-4 rotate-180" />
         {backLabel}
       </button>
-      <div className="flex items-center gap-4 rounded-[1.35rem] border border-white/75 bg-white/62 p-4 shadow-sm">
-        <div className="size-32 shrink-0 overflow-hidden rounded-[1.1rem] shadow-sm">
+      <div className="flex items-start gap-4">
+        <div className="size-28 shrink-0 overflow-hidden rounded-[1.4rem] shadow-[0_14px_36px_rgba(47,55,76,0.22)] ring-1 ring-black/5">
           <TrackCover track={cover} className="size-full" priority />
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">专辑</p>
-          <h1 className="mt-1 line-clamp-2 text-lg font-semibold leading-snug">{album.title}</h1>
-          <p className="mt-1 truncate text-xs text-neutral-500">
+        <div className="min-w-0 flex-1 pt-1">
+          <p className="text-xs font-bold text-rose-500">专辑</p>
+          <h1 className="mt-1 line-clamp-2 text-[1.55rem] font-bold leading-tight tracking-tight text-neutral-950">{album.title}</h1>
+          <p className="mt-1.5 truncate text-xs text-neutral-500">
             {album.artist} · {album.tracks.length} 首 · {formatTotalDuration(album.tracks)}
           </p>
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3.5 flex items-center gap-2">
             <PlayAllButton onPlay={() => album.tracks[0] && controls.chooseTrack(album.tracks[0].id, album.tracks)} count={album.tracks.length} />
             <RandomPlayButton onPlay={() => controls.playShuffledTracks(album.tracks)} count={album.tracks.length} />
           </div>
@@ -851,7 +883,7 @@ export function ArtistDetail({
         <ChevronRight className="size-4 rotate-180" />
         返回歌手
       </button>
-      <div className="flex items-center gap-4 rounded-[1.35rem] border border-white/75 bg-white/62 p-4 shadow-sm">
+      <div className="flex items-center gap-4">
         <ArtistAvatar name={artist.name} avatarUrl={artist.avatarUrl} size="lg" />
         <div className="min-w-0 flex-1">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">歌手</p>
@@ -980,7 +1012,7 @@ function PlaylistsSection(controls: MobileControls) {
       {owned.length > 0 && (
         <section>
           <div className="mb-2 flex items-center justify-between px-1">
-            <h2 className="text-xs font-semibold text-neutral-600">我创建的歌单</h2>
+            <h2 className="text-[1.05rem] font-bold tracking-tight text-neutral-950">我创建的歌单</h2>
             <span className="text-[10px] text-neutral-400">{owned.length} 个</span>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -993,7 +1025,7 @@ function PlaylistsSection(controls: MobileControls) {
       {saved.length > 0 && (
         <section>
           <div className="mb-2 flex items-center justify-between px-1">
-            <h2 className="text-xs font-semibold text-neutral-600">我收藏的歌单</h2>
+            <h2 className="text-[1.05rem] font-bold tracking-tight text-neutral-950">我收藏的歌单</h2>
             <span className="text-[10px] text-neutral-400">{saved.length} 个</span>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -1512,7 +1544,7 @@ function SearchGroup({
   return (
     <section className="aria-rise mt-5">
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">
+        <h2 className="text-[1.05rem] font-bold tracking-tight text-neutral-950">
           {title} <span className="ml-1 text-xs font-normal text-neutral-400">{count}</span>
         </h2>
         {count > 4 && (

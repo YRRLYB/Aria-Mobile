@@ -50,6 +50,34 @@ export function BootSplash() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const phaseRef = useRef<Phase>("scramble");
   const startRef = useRef(0);
+  const flagHandledRef = useRef(false);
+
+  // Self-healing: if the previous run died while the splash was up, the
+  // aria-boot-active flag is still set - skip the animation this boot so a
+  // device-specific crash can never loop. A clean run clears the flag.
+  useEffect(() => {
+    if (flagHandledRef.current) return;
+    flagHandledRef.current = true;
+    try {
+      if (localStorage.getItem("aria-boot-active") === "1") {
+        localStorage.removeItem("aria-boot-active");
+        setGone(true);
+        return;
+      }
+      localStorage.setItem("aria-boot-active", "1");
+    } catch {
+      // Storage unavailable: play the splash as usual.
+    }
+  }, []);
+
+  function finish() {
+    try {
+      localStorage.removeItem("aria-boot-active");
+    } catch {
+      // ignore
+    }
+    setGone(true);
+  }
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -57,7 +85,7 @@ export function BootSplash() {
 
   useEffect(() => {
     if (phase === "fade") {
-      const timer = window.setTimeout(() => setGone(true), 480);
+      const timer = window.setTimeout(() => finish(), 480);
       return () => window.clearTimeout(timer);
     }
     if (phase === "logo") {
@@ -72,7 +100,7 @@ export function BootSplash() {
   // background, an exception in the canvas path), the splash must never
   // trap the app behind it.
   useEffect(() => {
-    const failsafe = window.setTimeout(() => setGone(true), 6500);
+    const failsafe = window.setTimeout(() => finish(), 6500);
     return () => window.clearTimeout(failsafe);
   }, []);
 

@@ -167,9 +167,9 @@ const localTracks: Track[] = [
 ];
 
 const playlists = [
-  { id: "p1", name: "深夜电台", trackCount: 38, subscribed: true, owned: false, creatorName: "云村电台", coverColor: "#8a5a72", coverUrl: cover("深夜电台", "#8a5a72", "#221722", "#d6a2b9") },
+  { id: "p1", name: "深夜电台", trackCount: 38, subscribed: true, owned: false, creatorName: "Aria电台", coverColor: "#8a5a72", coverUrl: cover("深夜电台", "#8a5a72", "#221722", "#d6a2b9") },
   { id: "p2", name: "驾驶时听", trackCount: 24, subscribed: true, owned: false, creatorName: "公路音乐", coverColor: "#4d567d", coverUrl: cover("驾驶时听", "#4d567d", "#161b2b", "#9fa9d9") },
-  { id: "p3", name: "雨天房间", trackCount: 16, subscribed: false, owned: true, creatorName: "云村听友", coverColor: "#3d6b70", coverUrl: cover("雨天房间", "#3d6b70", "#142524", "#9cd1d1") },
+  { id: "p3", name: "雨天房间", trackCount: 16, subscribed: false, owned: true, creatorName: "YRR_LYB", coverColor: "#3d6b70", coverUrl: cover("雨天房间", "#3d6b70", "#142524", "#9cd1d1") },
   { id: "p4", name: "旧日回声", trackCount: 52, subscribed: true, owned: false, creatorName: "旧唱片店", coverColor: "#7b6240", coverUrl: cover("旧日回声", "#7b6240", "#2b2216", "#d7be8c") },
 ];
 
@@ -234,7 +234,7 @@ const controls = {
     : {},
   neteaseAccount: {
     connected: true,
-    nickname: "云村听友",
+    nickname: "YRR_LYB",
     userId: "94321",
     avatarUrl: cover("云", "#6c7a96", "#1e2430", "#c9d6ef"),
     cookiePreview: "本机会话 · 直连",

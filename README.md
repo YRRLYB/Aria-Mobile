@@ -8,9 +8,9 @@ Aria Mobile 是 Aria 桌面端的 Android 音乐播放器，支持局域网伴�
 
 ## 最新版本
 
-- 版本：`0.5.14`
-- Android versionCode：`52`
-- 构建产物：`Aria-Mobile-0.5.14.apk`
+- 版本：`0.5.16`
+- Android versionCode：`54`
+- 构建产物：`Aria-Mobile-0.5.16.apk`
 - 与 0.5.6 使用同一签名密钥，手机上可直接覆盖安装。
 
 ## 主要功能

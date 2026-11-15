@@ -174,24 +174,31 @@ export function MobileApp() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      await hydrateLibrary();
-      if (isNativeApp() && getDataMode() === "direct") {
-        const loggedIn = await initDirectMode();
+      try {
+        await hydrateLibrary();
+        if (isNativeApp() && getDataMode() === "direct") {
+          const loggedIn = await initDirectMode();
+          if (!mounted) return;
+          setGate(loggedIn ? "ready" : "unconfigured");
+          return;
+        }
+        const connection = readConnection();
+        if (!connection.serverUrl) {
+          setGate("unconfigured");
+          return;
+        }
+        const result = await verifyConnection(connection.serverUrl, connection.token);
         if (!mounted) return;
-        setGate(loggedIn ? "ready" : "unconfigured");
-        return;
-      }
-      const connection = readConnection();
-      if (!connection.serverUrl) {
-        setGate("unconfigured");
-        return;
-      }
-      const result = await verifyConnection(connection.serverUrl, connection.token);
-      if (!mounted) return;
-      if (result.ok) {
-        setGate("ready");
-      } else {
-        setGateError(result.reason);
+        if (result.ok) {
+          setGate("ready");
+        } else {
+          setGateError(result.reason);
+          setGate("unconfigured");
+        }
+      } catch {
+        // A corrupted cache or a failing bridge call must never leave the app
+        // stuck behind the boot splash - fall back to the pairing screen.
+        if (!mounted) return;
         setGate("unconfigured");
       }
     })();
