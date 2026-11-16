@@ -52,13 +52,21 @@ export function CollectionScreen({ collection, controls, onBack }: { collection:
       </div>
     )
   ) : collection === "roam" ? (
-    <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.1rem] bg-[linear-gradient(140deg,#d9def0,#9aa7cc)] text-[#3d4b70] shadow-sm">
-      <Radar className="size-10" />
-    </div>
+    tracks.length ? (
+      <CoverCollage tracks={tracks} className="size-28 shrink-0 rounded-[1.1rem]" priority />
+    ) : (
+      <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.1rem] bg-[linear-gradient(140deg,#d9def0,#9aa7cc)] text-[#3d4b70] shadow-sm">
+        <Radar className="size-10" />
+      </div>
+    )
   ) : (
-    <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.1rem] bg-[linear-gradient(140deg,#dce8e2,#a8c5b9)] text-[#3b5a4f] shadow-sm">
-      <History className="size-10" />
-    </div>
+    tracks.length ? (
+      <CoverCollage tracks={tracks} className="size-28 shrink-0 rounded-[1.1rem]" priority />
+    ) : (
+      <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.1rem] bg-[linear-gradient(140deg,#dce8e2,#a8c5b9)] text-[#3b5a4f] shadow-sm">
+        <History className="size-10" />
+      </div>
+    )
   );
   const meta = collection === "history"
     ? `${tracks.length} 首 · 按播放时间记录`

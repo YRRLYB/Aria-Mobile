@@ -1493,8 +1493,10 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
           applyTrackUpdate(failedTrackId, (track) => ({ ...track, streamUrl: `direct:${track.providerId ?? numericId}` }));
           window.setTimeout(() => {
             // Reuse the original queue; passing a one-track queue here used to
-            // wipe the rest of the playlist after a stream failure.
-            void chooseTrack(failedTrackId);
+            // wipe the rest of the playlist after a stream failure. The retry
+            // resumes at the last committed playback time instead of 0.
+            const resumeAt = Math.max(0, getPlaybackTime() - 0.4);
+            void chooseTrack(failedTrackId, undefined, { startPosition: resumeAt });
           }, 120);
           return;
         }

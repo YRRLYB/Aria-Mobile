@@ -218,17 +218,14 @@ export function HomeScreen(controls: MobileControls) {
   }, [controls.playHistory, todayStart]);
   const daily = dailyTracks.slice(0, 5);
   const roamFirst = roamTracks[0];
+  const roamCovers = roamTracks.slice(0, 2);
 
   return (
     <div className="pb-4">
       {/* 问候 */}
       <div className="mt-1 flex items-center justify-between gap-3">
         <h1 className="truncate text-[1.7rem] font-bold tracking-tight text-neutral-950">
-          {neteaseAccount?.connected
-          ? neteaseAccount.nickname
-            ? `你好，${neteaseAccount.nickname}`
-            : "你好"
-          : "音乐从这里开始"}
+          Aria向你问好
         </h1>
         {neteaseAccount?.avatarUrl
           ? <img src={neteaseAccount.avatarUrl} alt="" className="size-11 shrink-0 rounded-full object-cover shadow-sm" />
@@ -236,7 +233,7 @@ export function HomeScreen(controls: MobileControls) {
       </div>
 
       {/* 我喜欢的音乐：大封面 + 超大数字 + 黑色播放圆钮 */}
-      <div className="aria-rise mt-7 flex items-center gap-4">
+      <div className="aria-rise mt-6 flex items-center gap-4">
         <button
           type="button"
           onClick={() => openCollection("liked")}
@@ -289,16 +286,14 @@ export function HomeScreen(controls: MobileControls) {
       </div>
 
       {/* 每日推荐 */}
-      <section className="aria-rise mt-8">
+      <section className="aria-rise mt-6">
         <button type="button" onClick={() => openCollection("daily")} className="flex w-full items-center justify-between">
           <h2 className="text-[1.3rem] font-bold tracking-tight text-neutral-950">每日推荐</h2>
           <ChevronRight className="size-5 text-neutral-950" />
         </button>
         <div className="no-scrollbar -mx-4 mt-3.5 flex gap-3.5 overflow-x-auto px-4 pb-1">
-          {daily.map((track, index) => (
-            <div key={track.id} className={index % 2 === 1 ? "mt-4" : ""}>
-              <HorizontalTrackCard track={track} active={controls.activeTrackId === track.id} onPlay={() => chooseTrack(track.id, dailyTracks)} />
-            </div>
+          {daily.map((track) => (
+            <HorizontalTrackCard key={track.id} track={track} active={controls.activeTrackId === track.id} onPlay={() => chooseTrack(track.id, dailyTracks)} />
           ))}
           {!daily.length && (
             <button onClick={() => openCollection("daily")} className="flex h-16 w-full items-center justify-center rounded-[0.9rem] border border-dashed border-neutral-950/15 text-xs text-neutral-400">
@@ -309,13 +304,13 @@ export function HomeScreen(controls: MobileControls) {
       </section>
 
       {/* 私人漫游：文案 + 开始漫游 + 右侧封面 */}
-      <section className="aria-rise aria-rise-2 mt-8">
+      <section className="aria-rise aria-rise-2 mt-5">
         <button type="button" onClick={() => openCollection("roam")} className="flex w-full items-center justify-between">
           <h2 className="text-[1.3rem] font-bold tracking-tight text-neutral-950">私人漫游</h2>
           <ChevronRight className="size-5 text-neutral-950" />
         </button>
         <p className="mt-1.5 text-xs text-neutral-500">根据你的口味连续推荐</p>
-        <div className="mt-4 flex items-center gap-5">
+        <div className="mt-4 flex items-center gap-4">
           <button
             type="button"
             onClick={async () => {
@@ -327,16 +322,19 @@ export function HomeScreen(controls: MobileControls) {
             <Play className="size-4" />
             开始漫游
           </button>
-          {roamFirst && (
-            <button
-              type="button"
-              onClick={() => openCollection("roam")}
-              className="block size-24 shrink-0 overflow-hidden rounded-[1.2rem] shadow-[0_12px_30px_rgba(47,55,76,0.22)] ring-1 ring-black/5 transition active:scale-[0.98]"
-              aria-label="查看私人漫游"
-            >
-              <TrackCover track={roamFirst} className="size-full" priority />
-            </button>
-          )}
+          <div className="flex min-w-0 flex-1 justify-end gap-2.5">
+            {roamCovers.map((track, index) => (
+              <button
+                key={`${track.id}-${index}`}
+                type="button"
+                onClick={() => openCollection("roam")}
+                className="block size-[5.5rem] shrink-0 overflow-hidden rounded-[1.2rem] shadow-[0_12px_30px_rgba(47,55,76,0.22)] ring-1 ring-black/5 transition active:scale-[0.98]"
+                aria-label="查看私人漫游"
+              >
+                <TrackCover track={track} className="size-full" priority={index === 0} />
+              </button>
+            ))}
+          </div>
         </div>
       </section>
     </div>
