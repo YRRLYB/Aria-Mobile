@@ -178,8 +178,8 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-[1.1rem] border border-dashed border-neutral-950/10 bg-white/45 px-5 py-8 text-center">
-      {icon && <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-white text-neutral-400 shadow-sm">{icon}</div>}
+    <div className="flex flex-col items-center justify-center px-5 py-9 text-center">
+      {icon && <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-neutral-950/[0.04] text-neutral-400">{icon}</div>}
       <p className="text-sm font-medium text-neutral-800">{title}</p>
       {description && <p className="mt-1 max-w-xs text-xs leading-5 text-neutral-500">{description}</p>}
       {action && <div className="mt-4">{action}</div>}

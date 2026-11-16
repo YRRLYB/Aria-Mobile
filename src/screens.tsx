@@ -296,7 +296,7 @@ export function HomeScreen(controls: MobileControls) {
             <HorizontalTrackCard key={track.id} track={track} active={controls.activeTrackId === track.id} onPlay={() => chooseTrack(track.id, dailyTracks)} />
           ))}
           {!daily.length && (
-            <button onClick={() => openCollection("daily")} className="flex h-16 w-full items-center justify-center rounded-[0.9rem] border border-dashed border-neutral-950/15 text-xs text-neutral-400">
+            <button onClick={() => openCollection("daily")} className="flex h-14 w-full items-center justify-center text-xs text-neutral-400">
               还没有内容 · 点按加载
             </button>
           )}
@@ -518,7 +518,7 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
       <div className="mx-0 mt-3 h-px bg-neutral-950/[0.06]" aria-hidden />
 
       <div className="sticky top-0 z-20 -mx-4 mt-3 px-4 py-2">
-        <div className="no-scrollbar flex gap-2 overflow-x-auto">
+        <div className="no-scrollbar flex items-center gap-4 overflow-x-auto">
           {sections.map(({ id, label }) => (
             <button
               key={id}
@@ -528,8 +528,8 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
                 setSelectedAlbumKey(null);
                 setSelectedArtistName(null);
               }}
-              className={`tap-scale shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                section === id ? "bg-neutral-950 text-white shadow-sm" : "bg-white/75 text-neutral-600 shadow-sm"
+              className={`tap-scale relative shrink-0 pb-1.5 text-[13px] transition ${
+                section === id ? "font-bold text-neutral-950 after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:bg-neutral-950" : "font-medium text-neutral-400"
               }`}
             >
               {label}
@@ -539,14 +539,14 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
         {sourceVisible && (
           <div className="mt-2 flex items-center gap-2">
             <span className="shrink-0 text-[11px] font-medium text-neutral-400">来源</span>
-            <div className="no-scrollbar flex gap-1.5 overflow-x-auto">
+            <div className="no-scrollbar flex items-center gap-3.5 overflow-x-auto">
               {SOURCES.map(({ id, label }) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => setSource(id)}
-                  className={`tap-scale shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
-                    source === id ? "bg-neutral-950/[0.08] text-neutral-950 ring-1 ring-neutral-950/30" : "bg-white/60 text-neutral-500"
+                  className={`tap-scale shrink-0 pb-0.5 text-xs transition ${
+                    source === id ? "font-bold text-neutral-950" : "font-medium text-neutral-400"
                   }`}
                 >
                   {label}
@@ -700,7 +700,7 @@ function AlbumSection({ albums, onOpen }: { albums: AlbumGroup[]; onOpen: (key: 
           event.preventDefault();
           applyNow();
         }}
-        className="mb-3 flex items-center gap-2 rounded-[0.9rem] border border-neutral-950/[0.08] bg-white px-3 py-2 text-xs text-neutral-500"
+        className="mb-3 flex items-center gap-2 border-b border-neutral-950/[0.09] px-1 pb-2"
       >
         <Search className="size-4 shrink-0" />
         <input
