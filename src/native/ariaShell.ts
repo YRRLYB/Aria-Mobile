@@ -3,6 +3,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 const AriaShell = registerPlugin<{
   getSafeAreas(): Promise<{ top: number; bottom: number }>;
   requestUninterruptedPlayback(): Promise<{ alreadyExempt: boolean }>;
+  hasAudioPermission(): Promise<{ granted: boolean }>;
   requestAudioPermission(): Promise<{ granted: boolean }>;
   openExternal(options: { url: string }): Promise<void>;
   downloadTrack(options: {
@@ -20,7 +21,11 @@ const AriaShell = registerPlugin<{
       durationMs: number;
       streamUrl: string;
       coverUrl: string;
+      coverPath?: string;
+      filePath?: string;
     }>;
+    scannedRoots?: number;
+    scannedDirs?: number;
   }>;
 }>("AriaShell");
 
@@ -67,7 +72,25 @@ export type DeviceAudioTrack = {
   durationMs: number;
   streamUrl: string;
   coverUrl: string;
+  coverPath?: string;
+  filePath?: string;
 };
+
+export type DeviceScanSummary = {
+  tracks: DeviceAudioTrack[];
+  scannedRoots: number;
+  scannedDirs: number;
+};
+
+export async function hasAudioPermission(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  try {
+    const result = await AriaShell.hasAudioPermission();
+    return Boolean(result.granted);
+  } catch {
+    return false;
+  }
+}
 
 export async function requestAudioPermission(): Promise<boolean> {
   try {
@@ -78,10 +101,23 @@ export async function requestAudioPermission(): Promise<boolean> {
   }
 }
 
+export async function scanDeviceAudioDetailed(): Promise<DeviceScanSummary> {
+  if (!Capacitor.isNativePlatform()) return { tracks: [], scannedRoots: 0, scannedDirs: 0 };
+  const result = await AriaShell.scanLocalAudio();
+  const tracks = (result.tracks ?? []).map((item) => ({
+    ...item,
+    coverUrl: item.coverPath ? Capacitor.convertFileSrc(item.coverPath) : item.coverUrl,
+  }));
+  return {
+    tracks,
+    scannedRoots: result.scannedRoots ?? 0,
+    scannedDirs: result.scannedDirs ?? 0,
+  };
+}
+
 export async function scanDeviceAudio(): Promise<DeviceAudioTrack[]> {
-  if (!Capacitor.isNativePlatform()) return [];
-  const { tracks } = await AriaShell.scanLocalAudio();
-  return tracks ?? [];
+  const { tracks } = await scanDeviceAudioDetailed();
+  return tracks;
 }
 
 export async function downloadTrackFile(options: {

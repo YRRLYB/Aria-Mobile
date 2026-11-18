@@ -282,6 +282,19 @@ const controls = {
   disconnect: noop,
   switchToDesktopMode: noop,
   addDeviceTracks: noop,
+  scanningDevice: false,
+  scanDeviceLibrary: async () => ({ ok: true, count: deviceTracks.length, roots: 2, dirs: 18, message: "已索引 2 首手机音频（扫描 18 个目录）" }),
+  autoUpdateSettings: {
+    intervalMinutes: 60 as const,
+    includeLocalScan: true,
+    lastUpdatedAt: Date.now() - 12 * 60_000,
+    lastLocalScanAt: Date.now() - 18 * 60_000,
+    lastScanStats: { tracks: 2, roots: 2, dirs: 18 },
+  },
+  autoUpdating: false,
+  setAutoUpdateInterval: noop,
+  setAutoUpdateIncludeLocal: noop,
+  triggerManualUpdate: async () => undefined,
   usbExclusive: { enabled: false, connected: false, supported: true },
   setUsbExclusiveEnabled: async () => undefined,
 } as unknown as MobileControls;
@@ -292,24 +305,39 @@ const collection = (params.get("collection") ?? "liked") as "liked" | "history" 
 const section = (params.get("section") ?? "liked") as "liked" | "albums" | "artists" | "playlists" | "history";
 const frameWidth = Math.max(320, Math.min(460, Number(params.get("w")) || 390));
 const frameHeight = Math.max(700, Math.min(960, Number(params.get("h")) || 844));
+const likedCountParam = Number(params.get("likedCount")) || 0;
+const extraLiked = likedCountParam > 4
+  ? Array.from({ length: likedCountParam - 6 }, (_, idx) => ({
+      ...baseTracks[idx % baseTracks.length],
+      id: `netease:extra-${idx}`,
+      title: `收藏曲目 ${idx + 7}`,
+      likedAt: Date.now() - (idx + 10) * 60_000,
+    }))
+  : [];
+const effectiveControls: MobileControls = extraLiked.length
+  ? {
+      ...controls,
+      likedNeteaseTracks: [...controls.likedNeteaseTracks, ...extraLiked],
+    }
+  : controls;
 const searchQueryParam = params.get("q");
-const searchControls = searchQueryParam === null ? controls : {
-  ...controls,
+const searchControls = searchQueryParam === null ? effectiveControls : {
+  ...effectiveControls,
   searchQuery: searchQueryParam,
   searchBundle: params.get("empty") === "1"
     ? { localTracks: [], neteaseTracks: [], artists: [], playlists: [] }
-    : controls.searchBundle,
+    : effectiveControls.searchBundle,
 };
 
 function Page() {
   // Interactive like state on the player page so the pulse animation can be
   // exercised in the preview harness (the mock active track is netease-source,
   // whose liked flag comes from neteaseLikedIds).
-  const [likedIds, setLikedIds] = useState<Record<string, true>>(controls.neteaseLikedIds);
+  const [likedIds, setLikedIds] = useState<Record<string, true>>(effectiveControls.neteaseLikedIds);
   if (page === "player") {
     return (
       <NowPlaying
-        {...controls}
+        {...effectiveControls}
         neteaseLikedIds={likedIds}
         toggleLikeTrack={(trackId: string) =>
           setLikedIds((current) => {
@@ -329,7 +357,7 @@ function Page() {
   if (page === "collection") {
     return (
       <div className="safe-top h-full overflow-y-auto px-4 pb-4 pt-3">
-        <CollectionScreen collection={collection} controls={controls} onBack={noop} />
+        <CollectionScreen collection={collection} controls={effectiveControls} onBack={noop} />
       </div>
     );
   }
@@ -338,7 +366,7 @@ function Page() {
       ?? groupTracksByAlbum([...baseTracks, ...localTracks])[0];
     return (
       <div className="safe-top h-full overflow-y-auto px-4 pb-4 pt-3">
-        {album && <AlbumDetail album={album} controls={controls} onBack={noop} />}
+        {album && <AlbumDetail album={album} controls={effectiveControls} onBack={noop} />}
       </div>
     );
   }
@@ -347,7 +375,7 @@ function Page() {
     const tracks = [...baseTracks, ...localTracks].filter((track) => track.artist === artist.name);
     return (
       <div className="safe-top h-full overflow-y-auto px-4 pb-4 pt-3">
-        <ArtistDetail artist={artist} tracks={tracks} controls={controls} onBack={noop} />
+        <ArtistDetail artist={artist} tracks={tracks} controls={effectiveControls} onBack={noop} />
       </div>
     );
   }
@@ -355,20 +383,20 @@ function Page() {
   return (
     <div className="flex h-full flex-col">
       <div className="safe-top no-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-2 pt-3">
-        {page === "home" && <HomeScreen {...controls} />}
-        {page === "library" && <LibraryScreen {...controls} initialSection={section} />}
+        {page === "home" && <HomeScreen {...effectiveControls} />}
+        {page === "library" && <LibraryScreen {...effectiveControls} initialSection={section} />}
         {page === "playlist" && (
           <LibraryScreen
-            {...controls}
+            {...effectiveControls}
             selectedPlaylist={playlists[0]}
             playlistTracks={baseTracks.slice(0, 5)}
             initialSection="playlists"
           />
         )}
         {page === "search" && <SearchScreen {...searchControls} />}
-        {page === "settings" && <SettingsScreen {...controls} directMode={false} />}
+        {page === "settings" && <SettingsScreen {...effectiveControls} directMode={false} />}
       </div>
-      <MiniPlayer {...controls} />
+      <MiniPlayer {...effectiveControls} />
       <TabBar activeTab={tab} onSelect={noop} />
     </div>
   );

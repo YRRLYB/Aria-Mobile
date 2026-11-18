@@ -40,30 +40,30 @@ export function CollectionScreen({ collection, controls, onBack }: { collection:
   const isHistory = collection === "history";
   const visibleTracks = isHistory ? filtered : filtered.slice(0, limit);
   const visual = collection === "liked" ? (
-    <div className="size-28 shrink-0 overflow-hidden rounded-[1.1rem] shadow-sm">
-      {tracks[0] ? <TrackCover track={tracks[0]} className="size-full" priority /> : <div className="flex size-full items-center justify-center rounded-[1.1rem] bg-rose-50 text-rose-400"><HeartFill className="size-10" /></div>}
+    <div className="size-28 shrink-0 overflow-hidden rounded-[1.35rem] shadow-[0_14px_34px_rgba(47,55,76,0.22)] ring-1 ring-black/5">
+      {tracks[0] ? <TrackCover track={tracks[0]} className="size-full" priority /> : <div className="flex size-full items-center justify-center bg-rose-50 text-rose-400"><HeartFill className="size-10" /></div>}
     </div>
   ) : collection === "daily" ? (
     tracks.length ? (
-      <CoverCollage tracks={tracks} className="size-28 shrink-0 rounded-[1.1rem]" priority />
+      <CoverCollage tracks={tracks} className="size-28 shrink-0 rounded-[1.35rem] shadow-[0_14px_34px_rgba(47,55,76,0.22)] ring-1 ring-black/5" priority />
     ) : (
-      <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.1rem] bg-[linear-gradient(140deg,#e3ddd0,#bba98b)] text-[#5d4a34] shadow-sm">
+      <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.35rem] bg-[linear-gradient(140deg,#e3ddd0,#bba98b)] text-[#5d4a34] shadow-[0_14px_34px_rgba(47,55,76,0.18)]">
         <Compass className="size-10" />
       </div>
     )
   ) : collection === "roam" ? (
     tracks.length ? (
-      <CoverCollage tracks={tracks} className="size-28 shrink-0 rounded-[1.1rem]" priority />
+      <CoverCollage tracks={tracks} className="size-28 shrink-0 rounded-[1.35rem] shadow-[0_14px_34px_rgba(47,55,76,0.22)] ring-1 ring-black/5" priority />
     ) : (
-      <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.1rem] bg-[linear-gradient(140deg,#d9def0,#9aa7cc)] text-[#3d4b70] shadow-sm">
+      <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.35rem] bg-[linear-gradient(140deg,#d9def0,#9aa7cc)] text-[#3d4b70] shadow-[0_14px_34px_rgba(47,55,76,0.18)]">
         <Radar className="size-10" />
       </div>
     )
   ) : (
     tracks.length ? (
-      <CoverCollage tracks={tracks} className="size-28 shrink-0 rounded-[1.1rem]" priority />
+      <CoverCollage tracks={tracks} className="size-28 shrink-0 rounded-[1.35rem] shadow-[0_14px_34px_rgba(47,55,76,0.22)] ring-1 ring-black/5" priority />
     ) : (
-      <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.1rem] bg-[linear-gradient(140deg,#dce8e2,#a8c5b9)] text-[#3b5a4f] shadow-sm">
+      <div className="flex size-28 shrink-0 items-center justify-center rounded-[1.35rem] bg-[linear-gradient(140deg,#dce8e2,#a8c5b9)] text-[#3b5a4f] shadow-[0_14px_34px_rgba(47,55,76,0.18)]">
         <History className="size-10" />
       </div>
     )
@@ -115,15 +115,15 @@ export function CollectionScreen({ collection, controls, onBack }: { collection:
       />
       <p className="mb-3 -mt-1 text-xs text-neutral-500">{description}</p>
 
-      <div className="mb-3 flex items-center gap-2">
-        <label className="flex min-w-0 flex-1 items-center gap-2 border-b border-black/10 px-2 py-2">
+      <div className="mb-3.5 flex items-center gap-2">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-white/85 px-3.5 py-2 shadow-[0_8px_22px_rgba(47,55,76,0.07)] ring-1 ring-neutral-950/[0.05] focus-within:ring-neutral-950/20">
           <Search className="size-4 shrink-0 text-neutral-400" />
           <input
             aria-label="筛选音乐"
             placeholder="筛选歌曲、歌手"
             value={query}
             onChange={(event) => { setQuery(event.target.value); setLimit(80); }}
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
           />
         </label>
         {!isHistory && (
@@ -132,7 +132,7 @@ export function CollectionScreen({ collection, controls, onBack }: { collection:
             disabled={busy}
             onClick={() => void refresh()}
             aria-label="刷新"
-            className="tap-scale flex size-9 shrink-0 items-center justify-center rounded-full bg-white/70 text-neutral-500 shadow-sm disabled:opacity-40"
+            className="tap-scale flex size-10 shrink-0 items-center justify-center rounded-full bg-white/85 text-neutral-600 shadow-[0_8px_22px_rgba(47,55,76,0.07)] ring-1 ring-neutral-950/[0.05] disabled:opacity-40"
           >
             <RefreshCw className={`size-4 ${busy ? "animate-spin" : ""}`} />
           </button>

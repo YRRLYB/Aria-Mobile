@@ -59,17 +59,18 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
           transition={{ duration: 0.4, ease: "easeOut" }}
           className="mx-auto w-full max-w-sm"
         >
-          <div className="flex items-center gap-3">
-            <img src={bootLogo} alt="" className="size-11 shrink-0" draggable={false} />
+          <div className="flex items-center gap-3.5">
+            <img src={bootLogo} alt="" className="size-12 shrink-0" draggable={false} />
             <div>
-              <h1 className="text-xl font-semibold">Aria 手机版</h1>
-              <p className="text-xs text-neutral-500">连接同一局域网内的 Aria 桌面端</p>
+              <p className="text-xs font-bold text-rose-500">Aria 手机版</p>
+              <h1 className="text-[1.45rem] font-bold tracking-tight text-neutral-950">连接或直连曲库</h1>
+              <p className="text-xs text-neutral-500">连接同一局域网的桌面端，或直接听网易云</p>
             </div>
           </div>
 
-          <div className="mt-8 space-y-4 rounded-[1.4rem] border border-white/75 bg-white/70 p-5 shadow-[0_18px_60px_rgba(47,55,76,0.12)] backdrop-blur">
+          <div className="mt-7 space-y-4 rounded-[1.45rem] bg-white/85 p-5 shadow-[0_16px_44px_rgba(47,55,76,0.10)] ring-1 ring-neutral-950/[0.05] backdrop-blur">
             <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">服务器地址</span>
+              <span className="text-xs font-semibold text-neutral-600">服务器地址</span>
               <input
                 value={serverUrl}
                 onChange={(event) => setServerUrl(event.target.value)}
@@ -78,38 +79,38 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
-                className="mt-2 w-full rounded-[0.9rem] border border-neutral-950/10 bg-white px-3.5 py-3 font-mono text-sm outline-none transition focus:border-neutral-950/40"
+                className="mt-1.5 w-full rounded-[0.95rem] border border-neutral-950/10 bg-white px-3.5 py-2.5 font-mono text-sm outline-none transition focus:border-neutral-950/40"
               />
             </label>
             <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">连接令牌</span>
+              <span className="text-xs font-semibold text-neutral-600">连接令牌</span>
               <input
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
-                placeholder="在桌面端 设置 → 手机远程访问 里查看"
+                placeholder="在桌面端「手机远程访问」查看"
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
-                className="mt-2 w-full rounded-[0.9rem] border border-neutral-950/10 bg-white px-3.5 py-3 font-mono text-sm outline-none transition focus:border-neutral-950/40"
+                className="mt-1.5 w-full rounded-[0.95rem] border border-neutral-950/10 bg-white px-3.5 py-2.5 font-mono text-sm outline-none transition focus:border-neutral-950/40"
               />
             </label>
 
             <button
               type="button"
               onClick={readClipboardPairing}
-              className="w-full rounded-[0.9rem] bg-neutral-950/[0.04] px-3 py-2.5 text-xs text-neutral-500 transition active:bg-neutral-950/[0.08]"
+              className="tap-scale w-full whitespace-nowrap rounded-full bg-neutral-950/[0.05] px-4 py-2.5 text-xs font-medium text-neutral-600 transition active:bg-neutral-950/[0.09]"
             >
-              已复制桌面端二维码内容?点此自动填入
+              粘贴桌面端配对信息并自动填入
             </button>
             {isDirectCapable() && (
               <button
                 type="button"
                 disabled={status === "connecting"}
                 onClick={useDirectMode}
-                className="tap-scale flex w-full items-center justify-center gap-2 rounded-[0.9rem] border border-neutral-950/10 bg-white/70 px-3 py-2.5 text-xs font-medium text-neutral-600 transition disabled:opacity-50"
+                className="tap-scale flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-white px-4 py-2.5 text-xs font-semibold text-neutral-800 shadow-[0_6px_18px_rgba(47,55,76,0.08)] ring-1 ring-neutral-950/10 transition disabled:opacity-50"
               >
                 <Wifi className="size-3.5" />
-                不用电脑,直接听网易云(直连模式)
+                无需电脑 · 直接登录网易云
               </button>
             )}
             {pasteHint && <p className="text-xs text-amber-600">{pasteHint}</p>}
@@ -118,10 +119,10 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
               type="button"
               disabled={!serverUrl.trim() || status === "connecting"}
               onClick={connect}
-              className="tap-scale flex w-full items-center justify-center gap-2 rounded-[1rem] bg-neutral-950 px-4 py-3.5 text-sm font-semibold text-white shadow-[0_12px_34px_rgba(23,23,23,0.24)] transition disabled:opacity-50"
+              className="tap-scale flex w-full items-center justify-center gap-2 rounded-full bg-neutral-950 px-4 py-3.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(23,23,23,0.26)] transition disabled:opacity-45"
             >
               {status === "connecting" ? <Loader2 className="size-4 animate-spin" /> : <Server className="size-4" />}
-              {status === "connecting" ? "正在连接…" : "连接"}
+              {status === "connecting" ? "正在连接…" : "连接桌面端"}
             </button>
 
             {status === "unreachable" && (

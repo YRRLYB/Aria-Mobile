@@ -31,11 +31,12 @@ export function Toggle({
   );
 }
 
-/** An icon + title + description row with an optional right-side control. */
+/** An icon + title + description row with an optional right-side control inside a clean Settings card. */
 export function SettingsRow({
   icon,
   title,
   description,
+  value,
   right,
   onClick,
   children,
@@ -43,6 +44,7 @@ export function SettingsRow({
   icon?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
+  value?: ReactNode;
   right?: ReactNode;
   onClick?: () => void;
   children?: ReactNode;
@@ -50,45 +52,57 @@ export function SettingsRow({
   const body = (
     <>
       {icon && (
-        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-950/[0.04] text-neutral-500">
+        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-[0.75rem] bg-neutral-950/[0.045] text-neutral-700">
           {icon}
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium leading-6">{title}</p>
-        {description && <p className="mt-0.5 text-[11px] leading-4 text-neutral-500">{description}</p>}
+        <div className="flex items-center justify-between gap-2">
+          <p className="truncate text-[14px] font-semibold leading-5 text-neutral-950">{title}</p>
+          {value && <span className="shrink-0 text-xs font-medium tabular-nums text-neutral-500">{value}</span>}
+        </div>
+        {description && <p className="mt-0.5 text-[11.5px] leading-4 text-neutral-500">{description}</p>}
         {children}
       </div>
-      {right && <div className="shrink-0 pt-0.5">{right}</div>}
+      {right && <div className="shrink-0 self-center">{right}</div>}
     </>
   );
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className="tap-scale flex w-full items-start gap-3 py-3 text-left first:pt-0 last:pb-0">
+      <button type="button" onClick={onClick} className="tap-scale flex w-full items-start gap-3 py-3.5 text-left transition active:opacity-80">
         {body}
       </button>
     );
   }
-  return <div className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">{body}</div>;
+  return <div className="flex items-start gap-3 py-3.5">{body}</div>;
 }
 
-/** A settings card with a Chinese heading and divided rows inside. */
+/** A clean elevated card group matching Home's soft-white floating surface aesthetic. */
 export function SettingsGroup({
   title,
   description,
+  action,
   children,
   className,
 }: {
   title: string;
   description?: string;
+  action?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <section className={cn("mt-5 first:mt-0", className)}>
-      <h3 className="px-1 text-[13px] font-bold text-neutral-950">{title}</h3>
-      {description && <p className="mt-0.5 px-1 text-[11px] leading-4 text-neutral-500">{description}</p>}
-      <div className="mt-1 divide-y divide-neutral-950/[0.06]">{children}</div>
+      <div className="mb-2 flex items-end justify-between gap-2 px-1">
+        <div className="min-w-0">
+          <h3 className="text-[13px] font-bold tracking-tight text-neutral-950">{title}</h3>
+          {description && <p className="mt-0.5 text-[11px] leading-4 text-neutral-500">{description}</p>}
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
+      </div>
+      <div className="divide-y divide-neutral-950/[0.06] rounded-[1.35rem] bg-white/85 px-4 shadow-[0_10px_28px_rgba(47,55,76,0.06)] ring-1 ring-neutral-950/[0.05] backdrop-blur-sm">
+        {children}
+      </div>
     </section>
   );
 }
@@ -105,11 +119,11 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <header className="flex items-start justify-between gap-3">
+    <header className="mt-1 flex items-center justify-between gap-3">
       <div className="min-w-0">
-        {eyebrow && <p className="text-xs font-medium text-neutral-400">{eyebrow}</p>}
-        <h1 className={cn("text-[1.7rem] font-bold leading-tight tracking-tight text-neutral-950", eyebrow && "mt-0.5")}>{title}</h1>
-        {description && <div className="mt-1 text-xs leading-5 text-neutral-500">{description}</div>}
+        {eyebrow && <p className="text-xs font-semibold text-rose-500">{eyebrow}</p>}
+        <h1 className={cn("truncate text-[1.7rem] font-bold leading-tight tracking-tight text-neutral-950", eyebrow && "mt-0.5")}>{title}</h1>
+        {description && <div className="mt-0.5 text-xs leading-5 text-neutral-500">{description}</div>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </header>
@@ -118,7 +132,7 @@ export function PageHeader({
 
 export function Surface({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <section className={cn("rounded-[1.2rem] border border-neutral-950/[0.07] bg-white p-4", className)}>
+    <section className={cn("rounded-[1.35rem] bg-white/85 p-4 shadow-[0_10px_28px_rgba(47,55,76,0.06)] ring-1 ring-neutral-950/[0.05] backdrop-blur-sm", className)}>
       {children}
     </section>
   );
@@ -137,9 +151,9 @@ export function SectionHeading({
     <div className="mb-2.5 mt-6 flex items-end justify-between gap-3 first:mt-1">
       <div className="min-w-0">
         {eyebrow && (
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-400">{eyebrow}</p>
+          <p className="text-xs font-bold text-rose-500">{eyebrow}</p>
         )}
-        <h2 className={cn("truncate text-base font-semibold", eyebrow && "mt-0.5")}>{title}</h2>
+        <h2 className={cn("truncate text-[1.15rem] font-bold tracking-tight text-neutral-950", eyebrow && "mt-0.5")}>{title}</h2>
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
@@ -158,9 +172,9 @@ export function StatTile({
   accent?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-[1rem] border border-white/70 bg-white/62 p-3 shadow-sm">
-      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-neutral-400">{label}</p>
-      <p className={cn("mt-1 truncate text-lg font-semibold tabular-nums tracking-tight", accent)}>{value}</p>
+    <div className="min-w-0 rounded-[1.1rem] bg-white/80 p-3 shadow-[0_8px_22px_rgba(47,55,76,0.06)] ring-1 ring-neutral-950/[0.05]">
+      <p className="text-[11px] font-medium text-neutral-500">{label}</p>
+      <p className={cn("mt-1 truncate text-lg font-bold tabular-nums tracking-tight", accent)}>{value}</p>
       {hint && <p className="mt-0.5 truncate text-[10px] text-neutral-400">{hint}</p>}
     </div>
   );
@@ -178,9 +192,9 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center px-5 py-9 text-center">
-      {icon && <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-neutral-950/[0.04] text-neutral-400">{icon}</div>}
-      <p className="text-sm font-medium text-neutral-800">{title}</p>
+    <div className="flex flex-col items-center justify-center rounded-[1.35rem] bg-white/65 px-5 py-9 text-center ring-1 ring-neutral-950/[0.04]">
+      {icon && <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-neutral-950/[0.05] text-neutral-500">{icon}</div>}
+      <p className="text-sm font-semibold text-neutral-900">{title}</p>
       {description && <p className="mt-1 max-w-xs text-xs leading-5 text-neutral-500">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
@@ -198,7 +212,7 @@ export function LoadingState({ label = "加载中…" }: { label?: string }) {
 
 export function InlineError({ message }: { message: string }) {
   return (
-    <p role="alert" className="rounded-[0.85rem] border border-rose-200/70 bg-rose-50/80 px-3 py-2.5 text-xs leading-5 text-rose-700">
+    <p role="alert" className="rounded-[1rem] border border-rose-200/70 bg-rose-50/90 px-3.5 py-2.5 text-xs leading-5 text-rose-700">
       {message}
     </p>
   );
@@ -224,17 +238,21 @@ export function DetailHeader({
   return (
     <div className="pb-4">
       <div className="aria-rise">
-        <button type="button" onClick={onBack} className="tap-scale mb-3 flex items-center gap-1.5 text-xs font-medium text-neutral-500">
-          <ChevronRight className="size-4 rotate-180" />
+        <button
+          type="button"
+          onClick={onBack}
+          className="tap-scale mb-4 inline-flex items-center gap-1 rounded-full bg-white/75 px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-[0_4px_14px_rgba(47,55,76,0.08)] ring-1 ring-neutral-950/[0.05]"
+        >
+          <ChevronRight className="size-3.5 rotate-180" />
           {backLabel}
         </button>
         <div className="flex items-start gap-4">
           {visual}
-          <div className="min-w-0 flex-1 pt-1">
+          <div className="min-w-0 flex-1 pt-0.5">
             <p className="text-xs font-bold text-rose-500">{label}</p>
             <h1 className="mt-1 line-clamp-2 text-[1.55rem] font-bold leading-tight tracking-tight text-neutral-950">{title}</h1>
-            <div className="mt-1.5 text-xs text-neutral-500">{meta}</div>
-            {actions && <div className="mt-3.5 flex items-center gap-2">{actions}</div>}
+            <div className="mt-1.5 text-xs leading-5 text-neutral-500">{meta}</div>
+            {actions && <div className="mt-3.5 flex flex-wrap items-center gap-2">{actions}</div>}
           </div>
         </div>
       </div>

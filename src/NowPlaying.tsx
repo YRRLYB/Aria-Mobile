@@ -213,7 +213,7 @@ export function NowPlaying(controls: MobileControls & { onClose: () => void }) {
           className="absolute inset-x-0 top-0 h-28"
           style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0))" }}
         />
-        {/* right-side scrim keeps the floating lyrics legible on artwork */}
+        {/* right-side scrim keeps the floating right-aligned lyrics legible on artwork */}
         <AnimatePresence>
           {view === "lyrics" && (
             <motion.div
@@ -629,6 +629,8 @@ function lyricSeconds(time: string): number {
   return Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
 }
 
+const LYRIC_AUTO_RETURN_MS = 5000;
+
 function LyricsView({ controls, onClose }: { controls: MobileControls; onClose: () => void }) {
   const { activeTrack, currentTime, seekTo } = controls;
   const lyrics = activeTrack.lyrics ?? [];
@@ -636,34 +638,120 @@ function LyricsView({ controls, onClose }: { controls: MobileControls; onClose: 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const programmaticScroll = useRef(false);
   const programmaticTimer = useRef<number | null>(null);
+  const autoReturnTimer = useRef<number | null>(null);
+  const userTouching = useRef(false);
   const lastUserScroll = useRef(0);
+  const hasCenteredOnce = useRef(false);
   const [following, setFollowing] = useState(true);
+  const [containerHeight, setContainerHeight] = useState(0);
+
+  const clearAutoReturnTimer = () => {
+    if (autoReturnTimer.current !== null) {
+      window.clearTimeout(autoReturnTimer.current);
+      autoReturnTimer.current = null;
+    }
+  };
+
+  const scheduleAutoReturn = () => {
+    clearAutoReturnTimer();
+    autoReturnTimer.current = window.setTimeout(() => {
+      autoReturnTimer.current = null;
+      userTouching.current = false;
+      setFollowing(true);
+    }, LYRIC_AUTO_RETURN_MS);
+  };
+
+  // Measure viewport height so the first and last lyric lines can sit in the exact vertical center.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const updateHeight = () => setContainerHeight(container.clientHeight);
+    updateHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [lyrics.length]);
+
+  // Reset follow state when switching tracks.
+  useEffect(() => {
+    hasCenteredOnce.current = false;
+    clearAutoReturnTimer();
+    setFollowing(true);
+  }, [activeTrack.id]);
+
+  // Center the active line inside containerRef using bounding rects (immune to offsetParent offsets).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !following || containerHeight <= 0) return;
+    const activeLine = container.querySelector<HTMLElement>(`[data-line="${activeIndex}"]`);
+    if (!activeLine) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const lineRect = activeLine.getBoundingClientRect();
+    if (containerRect.height <= 0) return;
+
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+    const rawTarget = container.scrollTop + (lineRect.top - containerRect.top) - container.clientHeight / 2 + lineRect.height / 2;
+    const target = Math.min(maxScroll, Math.max(0, rawTarget));
+    const behavior: ScrollBehavior = hasCenteredOnce.current ? "smooth" : "auto";
+    hasCenteredOnce.current = true;
+
+    programmaticScroll.current = true;
+    container.scrollTo({ top: target, behavior });
+    if (programmaticTimer.current !== null) window.clearTimeout(programmaticTimer.current);
+    programmaticTimer.current = window.setTimeout(() => {
+      programmaticScroll.current = false;
+    }, behavior === "auto" ? 120 : 950);
+  }, [activeIndex, following, lyrics.length, containerHeight]);
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !following) return;
-    const activeLine = container.querySelector<HTMLElement>(`[data-line="${activeIndex}"]`);
-    if (!activeLine) return;
-    const target = activeLine.offsetTop - container.clientHeight / 2 + activeLine.clientHeight / 2;
-    programmaticScroll.current = true;
-    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-    if (programmaticTimer.current) window.clearTimeout(programmaticTimer.current);
-    programmaticTimer.current = window.setTimeout(() => {
+    if (!container) return;
+    const onScrollEnd = () => {
       programmaticScroll.current = false;
-    }, 450);
-  }, [activeIndex, following]);
+    };
+    container.addEventListener("scrollend", onScrollEnd);
+    return () => {
+      container.removeEventListener("scrollend", onScrollEnd);
+    };
+  }, [lyrics.length]);
 
   useEffect(() => () => {
-    if (programmaticTimer.current) window.clearTimeout(programmaticTimer.current);
+    if (programmaticTimer.current !== null) window.clearTimeout(programmaticTimer.current);
+    clearAutoReturnTimer();
   }, []);
 
+  function beginUserInteraction() {
+    programmaticScroll.current = false;
+    userTouching.current = true;
+    lastUserScroll.current = performance.now();
+    clearAutoReturnTimer();
+  }
+
+  function endUserInteraction() {
+    userTouching.current = false;
+    if (!following) scheduleAutoReturn();
+  }
+
   function handleScroll() {
-    if (programmaticScroll.current) return;
+    if (programmaticScroll.current && !userTouching.current) {
+      return;
+    }
     lastUserScroll.current = performance.now();
     setFollowing(false);
+    if (!userTouching.current) scheduleAutoReturn();
+  }
+
+  function returnToCurrent() {
+    clearAutoReturnTimer();
+    userTouching.current = false;
+    setFollowing(true);
   }
 
   function jumpToLine(line: LyricLine) {
+    clearAutoReturnTimer();
+    userTouching.current = false;
     seekTo(lyricSeconds(line.time));
     setFollowing(true);
   }
@@ -677,20 +765,22 @@ function LyricsView({ controls, onClose }: { controls: MobileControls; onClose: 
 
   if (!lyrics.length || (lyrics.length <= 3 && lyrics[0]?.text.includes("等待同步"))) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 px-7 text-left">
-        <p className="text-sm text-white/45">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-7 text-center">
+        <p className="text-sm text-white/50">
           {activeTrack.source === "netease" ? "歌词同步中…" : "这首歌曲暂时没有歌词"}
         </p>
         <button
           type="button"
           onClick={onClose}
-          className="tap-scale rounded-full border border-white/15 bg-white/[0.07] px-3.5 py-1.5 text-xs text-white/65"
+          className="tap-scale rounded-full border border-white/15 bg-white/[0.07] px-3.5 py-1.5 text-xs text-white/75"
         >
           返回封面
         </button>
       </div>
     );
   }
+
+  const verticalPad = containerHeight > 0 ? Math.max(88, Math.round(containerHeight / 2 - 28)) : undefined;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -709,11 +799,27 @@ function LyricsView({ controls, onClose }: { controls: MobileControls; onClose: 
       <div
         ref={containerRef}
         onScroll={handleScroll}
+        onTouchStart={beginUserInteraction}
+        onTouchEnd={endUserInteraction}
+        onTouchCancel={endUserInteraction}
+        onPointerDown={beginUserInteraction}
+        onPointerUp={endUserInteraction}
+        onPointerCancel={endUserInteraction}
+        onWheel={() => {
+          programmaticScroll.current = false;
+          userTouching.current = false;
+          lastUserScroll.current = performance.now();
+          setFollowing(false);
+          scheduleAutoReturn();
+        }}
         onClick={handleBlankClick}
-        className="no-scrollbar min-h-0 flex-1 overflow-y-auto pb-20 pl-20 pr-7 pt-[30%] text-right [text-shadow:0_2px_14px_rgba(0,0,0,0.7)]"
+        className="no-scrollbar relative min-h-0 flex-1 overflow-y-auto pl-20 pr-7 text-right [text-shadow:0_2px_14px_rgba(0,0,0,0.7)]"
         style={{
-          maskImage: "linear-gradient(to bottom, transparent 0%, black 10%, black 86%, transparent 100%)",
-          WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 10%, black 86%, transparent 100%)",
+          overflowAnchor: "none",
+          paddingTop: verticalPad ?? "42%",
+          paddingBottom: verticalPad ?? "42%",
+          maskImage: "linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%)",
+          WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%)",
         }}
         aria-label="歌词，点击空白返回封面，点击歌词跳转播放"
       >
@@ -730,15 +836,15 @@ function LyricsView({ controls, onClose }: { controls: MobileControls; onClose: 
                   event.stopPropagation();
                   jumpToLine(line);
                 }}
-                className={`inline-block max-w-full text-right transition-all duration-500 ${
+                className={`inline-block max-w-full origin-right text-right text-[1.15rem] font-semibold leading-8 transition-[transform,opacity,color] duration-300 ${
                   active
-                    ? "scale-[1.01] text-[1.35rem] font-semibold leading-9 text-white"
-                    : "text-[15px] leading-7 text-white/40 hover:text-white/65"
+                    ? "scale-100 text-white"
+                    : "scale-[0.86] text-white/40 hover:text-white/65"
                 }`}
               >
                 {active ? <KaraokeText line={line} currentTime={currentTime} /> : line.text}
                 {line.translation && (
-                  <span className={`mt-1 block font-normal ${active ? "text-white/55" : "text-white/30"} text-[11px]`}>
+                  <span className={`mt-1 block text-xs font-normal leading-5 ${active ? "text-white/60" : "text-white/32"}`}>
                     {line.translation}
                   </span>
                 )}
@@ -751,8 +857,8 @@ function LyricsView({ controls, onClose }: { controls: MobileControls; onClose: 
       {!following && (
         <button
           type="button"
-          onClick={() => setFollowing(true)}
-          className="tap-scale absolute bottom-2 right-6 z-10 flex items-center gap-1.5 rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] text-white/75 backdrop-blur"
+          onClick={returnToCurrent}
+          className="tap-scale absolute bottom-2 right-6 z-10 flex items-center gap-1.5 rounded-full border border-white/15 bg-black/50 px-3 py-1.5 text-[11px] font-medium text-white/80 shadow-lg backdrop-blur-md"
         >
           <ArrowDown className="size-3.5" />
           回到当前

@@ -30,8 +30,10 @@ import androidx.media3.common.ForwardingPlayer;
 import androidx.media3.database.StandaloneDatabaseProvider;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.cache.Cache;
 import androidx.media3.datasource.cache.CacheDataSource;
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor;
+import androidx.media3.datasource.cache.CacheEvictor;
+import androidx.media3.datasource.cache.CacheSpan;
 import androidx.media3.datasource.cache.SimpleCache;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -55,6 +57,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -97,6 +100,7 @@ public class AriaPlaybackService extends MediaSessionService {
     private AudioBitrateMeter bitrateMeter = new AudioBitrateMeter();
     private long lastMeasuredBitrate = 0;
     private SimpleCache audioCache;
+    private ConfigurableCacheEvictor cacheEvictor;
     private DataSource.Factory cachedDataSourceFactory;
     private Equalizer equalizer;
     private int pendingEqualizerPreset = -1;
@@ -426,11 +430,130 @@ public class AriaPlaybackService extends MediaSessionService {
         ContextCompat.registerReceiver(this, screenReceiver, screenFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
+    private static final String PREF_CACHE = "aria-cache-settings";
+    private static final String KEY_AUDIO_CACHE_MAX_BYTES = "audio_cache_max_bytes";
+    // Default audio cache budget: 10 GB. Values <= 0 mean unlimited (no eviction).
+    static final long DEFAULT_AUDIO_CACHE_MAX_BYTES = 10L * 1024L * 1024L * 1024L;
+
+    static long getAudioCacheMaxBytes(Context context) {
+        return context.getSharedPreferences(PREF_CACHE, MODE_PRIVATE)
+                .getLong(KEY_AUDIO_CACHE_MAX_BYTES, DEFAULT_AUDIO_CACHE_MAX_BYTES);
+    }
+
+    static Map<String, Object> setAudioCacheMaxBytes(Context context, long maxBytes) {
+        long normalized = maxBytes <= 0L ? 0L : maxBytes;
+        context.getSharedPreferences(PREF_CACHE, MODE_PRIVATE)
+                .edit()
+                .putLong(KEY_AUDIO_CACHE_MAX_BYTES, normalized)
+                .apply();
+        AriaPlaybackService service = instance;
+        if (service != null && service.cacheEvictor != null) {
+            service.cacheEvictor.setMaxBytes(normalized);
+            if (normalized > 0L && service.audioCache != null) {
+                final SimpleCache activeCache = service.audioCache;
+                final ConfigurableCacheEvictor activeEvictor = service.cacheEvictor;
+                service.urlExecutor.execute(() -> {
+                    try {
+                        activeEvictor.trimToLimit(activeCache);
+                    } catch (Throwable ignored) {
+                    }
+                });
+            }
+        }
+        return getAudioCacheStats(context);
+    }
+
+    private static final class ConfigurableCacheEvictor implements CacheEvictor {
+        private final TreeSet<CacheSpan> leastRecentlyUsed = new TreeSet<>((lhs, rhs) -> {
+            long delta = lhs.lastTouchTimestamp - rhs.lastTouchTimestamp;
+            if (delta == 0L) return lhs.compareTo(rhs);
+            return lhs.lastTouchTimestamp < rhs.lastTouchTimestamp ? -1 : 1;
+        });
+        private volatile long maxBytes;
+        private long currentSize = 0L;
+
+        ConfigurableCacheEvictor(long maxBytes) {
+            this.maxBytes = maxBytes <= 0L ? 0L : maxBytes;
+        }
+
+        void setMaxBytes(long maxBytes) {
+            this.maxBytes = maxBytes <= 0L ? 0L : maxBytes;
+        }
+
+        @Override
+        public boolean requiresCacheSpanTouches() {
+            return true;
+        }
+
+        @Override
+        public void onCacheInitialized() {
+            // Spans are registered through onSpanAdded during SimpleCache startup.
+        }
+
+        @Override
+        public void onStartFile(Cache cache, String key, long position, long length) {
+            if (length != C.LENGTH_UNSET) {
+                evictCache(cache, length);
+            }
+        }
+
+        @Override
+        public void onSpanAdded(Cache cache, CacheSpan span) {
+            synchronized (this) {
+                leastRecentlyUsed.add(span);
+                currentSize += span.length;
+            }
+            evictCache(cache, 0L);
+        }
+
+        @Override
+        public synchronized void onSpanRemoved(Cache cache, CacheSpan span) {
+            leastRecentlyUsed.remove(span);
+            currentSize = Math.max(0L, currentSize - span.length);
+        }
+
+        @Override
+        public synchronized void onSpanTouched(Cache cache, CacheSpan oldSpan, CacheSpan newSpan) {
+            leastRecentlyUsed.remove(oldSpan);
+            currentSize = Math.max(0L, currentSize - oldSpan.length);
+            leastRecentlyUsed.add(newSpan);
+            currentSize += newSpan.length;
+        }
+
+        void trimToLimit(Cache cache) {
+            evictCache(cache, 0L);
+        }
+
+        private synchronized CacheSpan nextSpanToEvict(long requiredSpace) {
+            long limit = maxBytes;
+            if (limit <= 0L || currentSize + requiredSpace <= limit || leastRecentlyUsed.isEmpty()) {
+                return null;
+            }
+            return leastRecentlyUsed.first();
+        }
+
+        private void evictCache(Cache cache, long requiredSpace) {
+            int guard = 0;
+            while (guard++ < 10_000) {
+                CacheSpan oldest = nextSpanToEvict(requiredSpace);
+                if (oldest == null) break;
+                cache.removeSpan(oldest);
+                synchronized (this) {
+                    if (leastRecentlyUsed.contains(oldest)) {
+                        // Span could not be removed (e.g. locked by an active reader); stop to avoid spinning.
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     private void createAudioCache() {
         File cacheDir = new File(getCacheDir(), "audio-cache");
+        cacheEvictor = new ConfigurableCacheEvictor(getAudioCacheMaxBytes(this));
         audioCache = new SimpleCache(
                 cacheDir,
-                new LeastRecentlyUsedCacheEvictor(128L * 1024 * 1024),
+                cacheEvictor,
                 new StandaloneDatabaseProvider(this));
         cachedDataSourceFactory = new CacheDataSource.Factory()
                 .setCache(audioCache)
@@ -721,7 +844,7 @@ public class AriaPlaybackService extends MediaSessionService {
     }
 
     static Map<String, Object> getAudioCacheStats(Context context) {
-        return audioCacheStats(new File(context.getCacheDir(), "audio-cache"));
+        return audioCacheStats(context, new File(context.getCacheDir(), "audio-cache"));
     }
 
     static void clearAudioCache(Context context, CacheResultSink sink) {
@@ -729,21 +852,21 @@ public class AriaPlaybackService extends MediaSessionService {
         AriaPlaybackService service = instance;
         if (service == null) {
             deleteTree(cacheDir);
-            sink.done(audioCacheStats(cacheDir));
+            sink.done(audioCacheStats(context, cacheDir));
             return;
         }
         service.runOnMain(() -> {
             service.resetAudioCache();
-            sink.done(audioCacheStats(cacheDir));
+            sink.done(audioCacheStats(context, cacheDir));
         });
     }
 
-    private static Map<String, Object> audioCacheStats(File directory) {
+    private static Map<String, Object> audioCacheStats(Context context, File directory) {
         long[] totals = treeStats(directory);
         Map<String, Object> result = new HashMap<>();
         result.put("bytes", totals[0]);
         result.put("files", totals[1]);
-        result.put("maxBytes", 128L * 1024 * 1024);
+        result.put("maxBytes", getAudioCacheMaxBytes(context));
         return result;
     }
 

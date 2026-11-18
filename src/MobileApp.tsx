@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { type Track } from "@/data/music";
-import { idleTrack } from "@/lib/trackMappers";
+import { idleTrack, localTrackToUiTrack } from "@/lib/trackMappers";
 import { api, getApiConnection, type NeteaseAccountSummary, type ProviderPlaylist } from "@/lib/api";
 import {
   createCachedQueueSnapshots,
+  formatDuration,
   readCachedAudioSettings,
   readCachedPlayerState,
   writeCachedAudioSettings,
@@ -40,7 +41,22 @@ import {
   registerDirectProvider,
   resolveDirectStreamUrl,
 } from "./native/neteaseDirect";
-import { applySafeAreasFromNative, downloadTrackFile, deleteDownloadedFile, requestUninterruptedPlayback } from "./native/ariaShell";
+import {
+  applySafeAreasFromNative,
+  downloadTrackFile,
+  deleteDownloadedFile,
+  hasAudioPermission,
+  requestAudioPermission,
+  requestUninterruptedPlayback,
+  scanDeviceAudioDetailed,
+} from "./native/ariaShell";
+import {
+  isAutoUpdateDue,
+  readAutoUpdateSettings,
+  writeAutoUpdateSettings,
+  type AutoUpdateInterval,
+  type AutoUpdateSettings,
+} from "./autoUpdate";
 import { cachedDirectAccount } from "./native/neteaseDirect";
 import { MiniPlayer, TabBar } from "./Chrome";
 import { HomeScreen, LibraryScreen, SearchScreen, SettingsScreen } from "./screens";
@@ -163,6 +179,13 @@ export type MobileControls = {
   disconnect: () => void;
   switchToDesktopMode: () => void;
   addDeviceTracks: (tracks: Track[]) => void;
+  scanningDevice: boolean;
+  scanDeviceLibrary: (promptIfNeeded?: boolean) => Promise<{ ok: boolean; count: number; roots: number; dirs: number; message?: string }>;
+  autoUpdateSettings: AutoUpdateSettings;
+  autoUpdating: boolean;
+  setAutoUpdateInterval: (minutes: AutoUpdateInterval) => void;
+  setAutoUpdateIncludeLocal: (enabled: boolean) => void;
+  triggerManualUpdate: () => Promise<void>;
   usbExclusive: UsbExclusiveSettings;
   setUsbExclusiveEnabled: (enabled: boolean) => Promise<void>;
 };
@@ -1822,14 +1845,118 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const [autoUpdateSettings, setAutoUpdateSettings] = useState<AutoUpdateSettings>(readAutoUpdateSettings);
+  const autoUpdateSettingsRef = useRef(autoUpdateSettings);
+  autoUpdateSettingsRef.current = autoUpdateSettings;
+  const [autoUpdating, setAutoUpdating] = useState(false);
+  const autoUpdateInFlightRef = useRef(false);
+  const [scanningDevice, setScanningDevice] = useState(false);
+
+  const updateAutoSettings = useCallback((updater: (current: AutoUpdateSettings) => AutoUpdateSettings) => {
+    setAutoUpdateSettings((current) => {
+      const next = updater(current);
+      autoUpdateSettingsRef.current = next;
+      writeAutoUpdateSettings(next);
+      return next;
+    });
+  }, []);
+
+  const scanDeviceLibrary = useCallback(async (promptIfNeeded = true) => {
+    if (!isNativeApp()) {
+      return { ok: false, count: 0, roots: 0, dirs: 0, message: "仅手机端支持本地音频扫描" };
+    }
+    setScanningDevice(true);
+    try {
+      const granted = promptIfNeeded ? await requestAudioPermission() : await hasAudioPermission();
+      if (!granted) {
+        return {
+          ok: false,
+          count: 0,
+          roots: 0,
+          dirs: 0,
+          message: "需要授权访问手机音频，请在系统弹窗中允许。",
+        };
+      }
+      const { tracks: raw, scannedRoots, scannedDirs } = await scanDeviceAudioDetailed();
+      const mapped: Track[] = raw.map((item) => ({
+        id: `device:${item.id}`,
+        title: item.title,
+        artist: item.artist || "未知歌手",
+        album: item.album || "未知专辑",
+        duration: formatDuration((item.durationMs || 0) / 1000),
+        quality: "Lossless" as const,
+        source: "local" as const,
+        streamUrl: item.streamUrl,
+        cover: item.coverUrl,
+        coverUrl: item.coverUrl,
+        accent: "#c9d3f2",
+        waveform: [24, 40, 66, 48, 78, 56, 36, 84, 62, 42, 70, 52],
+        lyrics: [],
+        lyricStatus: "missing" as const,
+      }));
+      setDeviceTracks(mapped);
+      const now = Date.now();
+      updateAutoSettings((current) => ({
+        ...current,
+        lastLocalScanAt: now,
+        lastScanStats: { tracks: mapped.length, roots: scannedRoots, dirs: scannedDirs },
+      }));
+      return {
+        ok: true,
+        count: mapped.length,
+        roots: scannedRoots,
+        dirs: scannedDirs,
+        message: mapped.length
+          ? `已索引 ${mapped.length} 首手机音频${scannedDirs ? `（扫描 ${scannedDirs} 个目录）` : ""}`
+          : "未在手机里找到音频文件。",
+      };
+    } catch {
+      return { ok: false, count: 0, roots: 0, dirs: 0, message: "扫描失败，已保留上次的曲库，请重试。" };
+    } finally {
+      setScanningDevice(false);
+    }
+  }, [updateAutoSettings]);
+
+  const { setLocalTracks, setLibraryMeta } = localLibrary;
+  const refreshDesktopLibrary = useCallback(async () => {
+    if (directMode) return;
+    try {
+      const lib = await api.getLibrary();
+      setLocalTracks(lib.tracks.map(localTrackToUiTrack));
+      setLibraryMeta({
+        roots: lib.roots.length,
+        updatedAt: lib.updatedAt ?? new Date().toISOString(),
+      });
+    } catch {
+      // Desktop library is best-effort.
+    }
+  }, [directMode, setLocalTracks, setLibraryMeta]);
+
+  const runUpdateCycle = useCallback(async (cycleOptions?: { includeLocal?: boolean; promptLocalPermission?: boolean }) => {
+    if (autoUpdateInFlightRef.current) return;
+    autoUpdateInFlightRef.current = true;
+    setAutoUpdating(true);
+    try {
+      await Promise.allSettled([
+        Promise.resolve(refreshNeteaseData()),
+        refreshDesktopLibrary(),
+      ]);
+      const shouldScanLocal = cycleOptions?.includeLocal ?? autoUpdateSettingsRef.current.includeLocalScan;
+      if (isNativeApp() && shouldScanLocal) {
+        await scanDeviceLibrary(Boolean(cycleOptions?.promptLocalPermission));
+      }
+      updateAutoSettings((current) => ({ ...current, lastUpdatedAt: Date.now() }));
+    } finally {
+      autoUpdateInFlightRef.current = false;
+      setAutoUpdating(false);
+    }
+  }, [refreshNeteaseData, refreshDesktopLibrary, scanDeviceLibrary, updateAutoSettings]);
+
+  const runUpdateCycleRef = useRef(runUpdateCycle);
+  runUpdateCycleRef.current = runUpdateCycle;
+
   // Initial data load: account info (desktop reads /api/settings for this),
-  // then netease pools. Local library loads inside its own hook. Runs ONCE —
-  // refreshNeteaseData is a fresh function each render, so depending on it
-  // directly would re-fire (and hammer the API) on every render.
-  const initialRefreshRef = useRef(refreshNeteaseData);
-  useEffect(() => {
-    initialRefreshRef.current = refreshNeteaseData;
-  });
+  // then netease pools + desktop library. Runs ONCE at launch.
   useEffect(() => {
     api
       .getSettings()
@@ -1837,14 +1964,39 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
         netease.setNeteaseAccount(settings.neteaseAccount);
       })
       .catch(() => undefined);
-    // Always refresh in the background: cached pools render immediately, and
-    // stale daily/roam data from a previous day must not persist for weeks.
     const refreshTimer = window.setTimeout(() => {
-      initialRefreshRef.current().catch(() => undefined);
+      void runUpdateCycleRef.current({ includeLocal: false });
     }, 600);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => window.clearTimeout(refreshTimer);
   }, []);
+
+  // Scheduled auto-update timer + overdue check on foreground resume.
+  useEffect(() => {
+    if (autoUpdateSettings.intervalMinutes <= 0) return;
+    const intervalMs = autoUpdateSettings.intervalMinutes * 60_000;
+    const checkDue = () => {
+      if (isAutoUpdateDue(autoUpdateSettingsRef.current)) {
+        void runUpdateCycleRef.current();
+      }
+    };
+    const timer = window.setInterval(checkDue, Math.min(intervalMs, 5 * 60_000));
+    const onVisible = () => {
+      if (document.visibilityState === "visible") checkDue();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    let resumeHandle: { remove(): void } | null = null;
+    if (isNativeApp()) {
+      void CapacitorApp.addListener("resume", checkDue).then((handle) => {
+        resumeHandle = handle;
+      }).catch(() => undefined);
+    }
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      resumeHandle?.remove();
+    };
+  }, [autoUpdateSettings.intervalMinutes]);
 
   const likedLocalTracks = useMemo(
     () => newestLiked([...deviceTracks, ...localTracks].filter((track) => likedTrackIds[track.id]).map((track) => ({ ...track, likedAt: localLikedTimes[track.id] ?? track.likedAt }))),
@@ -1871,6 +2023,19 @@ function AriaMobile({ onDisconnect }: { onDisconnect: () => void }) {
     deviceTracks,
     neteaseLikedIds,
     addDeviceTracks: (tracks: Track[]) => setDeviceTracks(tracks),
+    scanningDevice,
+    scanDeviceLibrary,
+    autoUpdateSettings,
+    autoUpdating,
+    setAutoUpdateInterval: (minutes: AutoUpdateInterval) => {
+      updateAutoSettings((current) => ({ ...current, intervalMinutes: minutes }));
+    },
+    setAutoUpdateIncludeLocal: (enabled: boolean) => {
+      updateAutoSettings((current) => ({ ...current, includeLocalScan: enabled }));
+    },
+    triggerManualUpdate: async () => {
+      await runUpdateCycle({ includeLocal: autoUpdateSettingsRef.current.includeLocalScan, promptLocalPermission: false });
+    },
     activeTrack,
     activeTrackId,
     actualQuality: nativeQuality?.trackId === activeTrack.id && nativeQuality.requestId === playbackSessionRef.current.requestId

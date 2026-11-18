@@ -230,6 +230,14 @@ public class AriaAudioPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void setCacheLimit(PluginCall call) {
+        double requested = call.getDouble("maxBytes", (double) AriaPlaybackService.DEFAULT_AUDIO_CACHE_MAX_BYTES);
+        long maxBytes = requested <= 0 ? 0L : Math.round(requested);
+        JSObject stats = toJsObject(AriaPlaybackService.setAudioCacheMaxBytes(getContext(), maxBytes));
+        if (!destroyed) call.resolve(stats);
+    }
+
+    @PluginMethod
     public void clearCache(PluginCall call) {
         AriaPlaybackService.clearAudioCache(getContext(), stats -> {
             if (!destroyed) call.resolve(toJsObject(stats));

@@ -50,8 +50,16 @@ public class LockPlayerActivity extends Activity {
         Bitmap cached = COVERS.get(key);
         if (cached != null) return cached;
         Uri uri = Uri.parse(key); InputStream input;
-        if ("content".equals(uri.getScheme())) input = context.getContentResolver().openInputStream(uri);
-        else { URLConnection connection = new URL(key).openConnection(); connection.setConnectTimeout(5000); connection.setReadTimeout(5000); input = connection.getInputStream(); }
+        String capPrefix = "/_capacitor_file_";
+        if ("content".equals(uri.getScheme())) {
+            input = context.getContentResolver().openInputStream(uri);
+        } else if ("file".equals(uri.getScheme()) && uri.getPath() != null) {
+            input = new java.io.FileInputStream(uri.getPath());
+        } else if ("localhost".equalsIgnoreCase(uri.getHost()) && uri.getPath() != null && uri.getPath().startsWith(capPrefix)) {
+            input = new java.io.FileInputStream(uri.getPath().substring(capPrefix.length()));
+        } else {
+            URLConnection connection = new URL(key).openConnection(); connection.setConnectTimeout(5000); connection.setReadTimeout(5000); input = connection.getInputStream();
+        }
         try (InputStream stream = input) {
             Bitmap decoded = BitmapFactory.decodeStream(stream);
             if (decoded == null) return null;

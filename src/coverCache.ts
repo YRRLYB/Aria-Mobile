@@ -1,6 +1,5 @@
 const CACHE_NAME = "aria-cover-cache-v1";
-const MAX_ENTRIES = 240;
-const MEMORY_ENTRIES = 160;
+const MEMORY_ENTRIES = 240;
 const FETCH_TIMEOUT_MS = 6_000;
 const FAILURE_COOLDOWN_MS = 5_000;
 
@@ -16,7 +15,7 @@ const failures = new Map<string, number>();
 let generation = 0;
 
 function isRemote(url: string): boolean {
-  return /^https?:\/\//i.test(url);
+  return /^https?:\/\//i.test(url) && !/^https?:\/\/localhost\/_capacitor_file_/i.test(url);
 }
 
 /** Cache sized artwork instead of full-resolution originals. */
@@ -45,17 +44,6 @@ async function openCache(): Promise<Cache | null> {
     return await caches.open(CACHE_NAME);
   } catch {
     return null;
-  }
-}
-
-async function trimCache(cache: Cache): Promise<void> {
-  try {
-    const keys = await cache.keys();
-    if (keys.length <= MAX_ENTRIES) return;
-    const excess = keys.length - MAX_ENTRIES;
-    await Promise.all(keys.slice(0, excess).map((key) => cache.delete(key)));
-  } catch {
-    // Best-effort cleanup only.
   }
 }
 
@@ -173,7 +161,6 @@ export function cachedCoverUrl(url: string | undefined | null): Promise<string> 
       if (taskGeneration !== generation) return target;
       if (cache) {
         await cache.put(target, response.clone()).catch(() => undefined);
-        void trimCache(cache);
       }
       const objectUrl = URL.createObjectURL(await response.blob());
       if (taskGeneration !== generation) {
