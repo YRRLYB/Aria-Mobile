@@ -388,7 +388,7 @@ export function HomeScreen(controls: MobileControls) {
   );
 }
 
-type LibrarySection = "liked" | "albums" | "artists" | "playlists" | "history";
+type LibrarySection = "tracks" | "liked" | "albums" | "artists" | "playlists" | "history";
 type LibrarySource = "all" | "netease" | "local" | "device" | "offline";
 
 const SOURCES: Array<{ id: LibrarySource; label: string }> = [
@@ -406,8 +406,12 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
   const [selectedArtistName, setSelectedArtistName] = useState<string | null>(null);
   const likedTracks = newestLiked([...controls.likedNeteaseTracks, ...controls.likedLocalTracks]);
   const localLibraryTracks = useMemo(
-    () => [...controls.localTracks, ...controls.deviceTracks, ...controls.offlineTracks],
+    () => uniqueTracks([...controls.localTracks, ...controls.deviceTracks, ...controls.offlineTracks]),
     [controls.localTracks, controls.deviceTracks, controls.offlineTracks],
+  );
+  const allLibraryTracks = useMemo(
+    () => uniqueTracks([...controls.deviceTracks, ...controls.localTracks, ...controls.offlineTracks, ...controls.likedNeteaseTracks]),
+    [controls.deviceTracks, controls.localTracks, controls.offlineTracks, controls.likedNeteaseTracks],
   );
   const albums = useMemo(
     () => groupTracksByAlbum(localLibraryTracks),
@@ -417,10 +421,6 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
     () => createLocalArtistSummaries(localLibraryTracks).sort((left, right) => right.trackCount - left.trackCount),
     [localLibraryTracks],
   );
-  const selectedAlbum = selectedAlbumKey ? albums.find((album) => album.key === selectedAlbumKey) ?? null : null;
-  const selectedArtist = selectedArtistName
-    ? artists.find((artist) => artist.name.toLowerCase() === selectedArtistName.toLowerCase()) ?? null
-    : null;
 
   const sourceIds = useMemo(() => ({
     offline: new Set(controls.offlineTracks.map((track) => track.id)),
@@ -430,7 +430,19 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
   }), [controls.offlineTracks, controls.deviceTracks, controls.localTracks, controls.likedNeteaseTracks]);
 
   const trackInSource = useCallback(
-    (track: Track) => (source === "all" ? true : sourceIds[source].has(track.id)),
+    (track: Track) => {
+      if (source === "all") return true;
+      if (source === "netease") {
+        return (
+          sourceIds.netease.has(track.id) ||
+          (track.source === "netease" &&
+            !sourceIds.local.has(track.id) &&
+            !sourceIds.device.has(track.id) &&
+            !sourceIds.offline.has(track.id))
+        );
+      }
+      return sourceIds[source].has(track.id);
+    },
     [source, sourceIds],
   );
 
@@ -438,12 +450,26 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
     if (sourceIds.offline.has(track.id)) return "离线";
     if (sourceIds.device.has(track.id)) return "手机";
     if (sourceIds.local.has(track.id)) return "桌面";
-    if (sourceIds.netease.has(track.id)) return "网易云";
+    if (sourceIds.netease.has(track.id) || track.source === "netease") return "网易云";
     return "";
   }
 
+  const filteredTracks = useMemo(() => {
+    if (source === "device") return controls.deviceTracks;
+    if (source === "local") return controls.localTracks;
+    if (source === "offline") return controls.offlineTracks;
+    if (source === "netease") return controls.likedNeteaseTracks;
+    return allLibraryTracks;
+  }, [source, controls.deviceTracks, controls.localTracks, controls.offlineTracks, controls.likedNeteaseTracks, allLibraryTracks]);
+
   const filteredLiked = useMemo(() => likedTracks.filter(trackInSource), [likedTracks, trackInSource]);
-  const filteredAlbums = useMemo(() => albums.filter((album) => album.tracks.some(trackInSource)), [albums, trackInSource]);
+  const filteredAlbums = useMemo(() => {
+    if (source === "all") return albums;
+    if (source === "netease") {
+      return groupTracksByAlbum(controls.likedNeteaseTracks.filter((track) => Boolean(track.album?.trim())));
+    }
+    return groupTracksByAlbum(localLibraryTracks.filter(trackInSource));
+  }, [source, albums, controls.likedNeteaseTracks, localLibraryTracks, trackInSource]);
   const filteredArtists = useMemo(() => {
     if (source === "netease") return controls.artistSummaries.slice(0, 40);
     return createLocalArtistSummaries(localLibraryTracks.filter(trackInSource))
@@ -451,8 +477,20 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
   }, [source, controls.artistSummaries, localLibraryTracks, trackInSource]);
   const filteredHistory = useMemo(() => controls.historyTracks.filter(trackInSource), [controls.historyTracks, trackInSource]);
 
+  const selectedAlbum = selectedAlbumKey
+    ? filteredAlbums.find((album) => album.key === selectedAlbumKey) ??
+      albums.find((album) => album.key === selectedAlbumKey) ??
+      null
+    : null;
+  const selectedArtist = selectedArtistName
+    ? filteredArtists.find((artist) => artist.name.toLowerCase() === selectedArtistName.toLowerCase()) ??
+      artists.find((artist) => artist.name.toLowerCase() === selectedArtistName.toLowerCase()) ??
+      null
+    : null;
+
   const sections: Array<{ id: LibrarySection; label: string }> = [
     { id: "liked", label: "我喜欢" },
+    { id: "tracks", label: "歌曲" },
     { id: "albums", label: "专辑" },
     { id: "artists", label: "歌手" },
     { id: "playlists", label: "歌单" },
@@ -460,6 +498,26 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
   ];
   const sourceVisible = section !== "playlists";
   const removeOffline = useCallback((trackId: string) => void controls.deleteOfflineTrack(trackId), [controls]);
+
+  function selectSection(next: LibrarySection) {
+    setSection(next);
+    setSelectedAlbumKey(null);
+    setSelectedArtistName(null);
+    // Entering "我喜欢" should not stay hidden behind a stale local/device/offline source filter.
+    if (next === "liked" && (source === "local" || source === "device" || source === "offline")) {
+      setSource("all");
+    }
+  }
+
+  function selectSource(next: LibrarySource) {
+    setSource(next);
+    setSelectedAlbumKey(null);
+    setSelectedArtistName(null);
+    // Picking a local/device/offline source while on "我喜欢" switches to "歌曲" so unliked local music is visible.
+    if (section === "liked" && (next === "local" || next === "device" || next === "offline")) {
+      setSection("tracks");
+    }
+  }
 
   const [scanHint, setScanHint] = useState("");
   async function scanPhone() {
@@ -478,9 +536,14 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
     );
   }
   if (selectedArtist) {
-    const tracks = uniqueTracks(localLibraryTracks.filter((track) =>
-      splitArtistNames(track.artist).some((name) => name.toLowerCase() === selectedArtist.name.toLowerCase()),
-    ));
+    const artistPool = uniqueTracks([...localLibraryTracks, ...controls.likedNeteaseTracks, ...controls.historyTracks]);
+    const tracks = artistPool.filter((track) => {
+      const matchesArtist = splitArtistNames(track.artist).some(
+        (name) => name.toLowerCase() === selectedArtist.name.toLowerCase(),
+      );
+      if (!matchesArtist) return false;
+      return source === "all" ? true : trackInSource(track);
+    });
     return (
       <ArtistDetail
         artist={selectedArtist}
@@ -516,11 +579,7 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
             {index > 0 && <div className="my-1 w-px shrink-0 bg-neutral-950/10" aria-hidden />}
             <button
               type="button"
-              onClick={() => {
-                setSection(stat.id);
-                setSelectedAlbumKey(null);
-                setSelectedArtistName(null);
-              }}
+              onClick={() => selectSection(stat.id)}
               className={`tap-scale min-w-0 flex-1 text-left ${index > 0 ? "pl-3" : "pr-1.5"}`}
             >
               <p className="truncate text-xs text-neutral-500">{stat.label}</p>
@@ -543,11 +602,7 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
               <button
                 key={id}
                 type="button"
-                onClick={() => {
-                  setSection(id);
-                  setSelectedAlbumKey(null);
-                  setSelectedArtistName(null);
-                }}
+                onClick={() => selectSection(id)}
                 className={`tap-scale shrink-0 whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11.5px] transition ${
                   active
                     ? "bg-neutral-950 font-semibold text-white shadow-sm"
@@ -569,7 +624,7 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
                   <button
                     key={id}
                     type="button"
-                    onClick={() => setSource(id)}
+                    onClick={() => selectSource(id)}
                     className={`tap-scale shrink-0 rounded-full px-2.5 py-1 text-xs transition ${
                       active
                         ? "bg-neutral-950/[0.08] font-bold text-neutral-950"
@@ -593,6 +648,16 @@ export function LibraryScreen({ initialSection = "liked", ...controls }: MobileC
             hint={scanHint}
             dirs={controls.autoUpdateSettings.lastScanStats?.dirs}
             onScan={() => void scanPhone()}
+          />
+        )}
+        {section === "tracks" && (
+          <SongsSection
+            controls={controls}
+            tracks={filteredTracks}
+            sourceTagFor={source === "all" ? sourceTagFor : undefined}
+            source={source}
+            filterLabel={source === "all" ? undefined : SOURCES.find((item) => item.id === source)?.label}
+            onRemove={source === "offline" ? removeOffline : undefined}
           />
         )}
         {section === "albums" && <AlbumSection albums={filteredAlbums} onOpen={setSelectedAlbumKey} />}
@@ -773,6 +838,59 @@ export function AlbumDetail({ album, controls, onBack, backLabel = "返回专辑
         ))}
       </div>
     </div>
+  );
+}
+
+function SongsSection({
+  controls,
+  tracks,
+  sourceTagFor,
+  source,
+  filterLabel,
+  onRemove,
+}: {
+  controls: MobileControls;
+  tracks: Track[];
+  sourceTagFor?: (track: Track) => string;
+  source: LibrarySource;
+  filterLabel?: string;
+  onRemove?: (trackId: string) => void;
+}) {
+  const { chooseTrack, toggleLikeTrack, likedTrackIds, neteaseLikedIds } = controls;
+  if (!tracks.length) {
+    const emptyText =
+      source === "device"
+        ? { title: "还没有手机本地音乐", desc: "点击上方「开始扫描」索引手机存储与下载目录中的音频文件。" }
+        : source === "local"
+          ? { title: "还没有桌面端歌曲", desc: "连接 Aria 桌面端并同步曲库后，桌面歌曲会显示在这里。" }
+          : source === "offline"
+            ? { title: "还没有离线缓存歌曲", desc: "下载或离线保存的歌曲会集中显示在这里。" }
+            : source === "netease"
+              ? { title: "还没有网易云曲库歌曲", desc: "登录网易云音乐后，同步的歌曲会显示在这里。" }
+              : { title: "曲库还是空的", desc: "连接桌面端、登录网易云或扫描手机本地音乐后即可播放。" };
+    return <EmptyState icon={<MusicNote className="size-5" />} title={emptyText.title} description={emptyText.desc} />;
+  }
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3 px-1">
+        <p className="text-xs font-medium text-neutral-500">{filterLabel ?? "全部歌曲"} · {tracks.length} 首</p>
+        <PlayAllButton onPlay={() => tracks[0] && chooseTrack(tracks[0].id, tracks)} count={tracks.length} />
+      </div>
+      <div className="mt-1 space-y-0.5">
+        {tracks.map((track) => (
+          <TrackRow
+            key={track.id}
+            track={track}
+            active={controls.activeTrackId === track.id}
+            liked={Boolean(neteaseLikedIds[track.id] || likedTrackIds[track.id])}
+            sourceTag={sourceTagFor?.(track) || undefined}
+            onPlay={() => chooseTrack(track.id, tracks)}
+            onLike={() => toggleLikeTrack(track.id)}
+            onRemove={onRemove ? () => onRemove(track.id) : undefined}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
