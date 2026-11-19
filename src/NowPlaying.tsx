@@ -722,10 +722,17 @@ function LyricsView({ controls, onClose }: { controls: MobileControls; onClose: 
     clearAutoReturnTimer();
   }, []);
 
-  function beginUserInteraction() {
+  const tapStart = useRef<{ x: number; y: number; time: number } | null>(null);
+
+  function beginUserInteraction(event?: { clientX?: number; clientY?: number; touches?: ArrayLike<{ clientX: number; clientY: number }> }) {
     programmaticScroll.current = false;
     userTouching.current = true;
-    lastUserScroll.current = performance.now();
+    const point = event?.touches?.[0] ?? event;
+    tapStart.current = {
+      x: point?.clientX ?? 0,
+      y: point?.clientY ?? 0,
+      time: performance.now(),
+    };
     clearAutoReturnTimer();
   }
 
@@ -757,9 +764,17 @@ function LyricsView({ controls, onClose }: { controls: MobileControls; onClose: 
   }
 
   function handleBlankClick(event: MouseEvent<HTMLDivElement>) {
-    // A scroll gesture also ends with a click on some Android WebViews.
-    if (performance.now() - lastUserScroll.current < 400) return;
     if ((event.target as HTMLElement).closest("button[data-lyric-text]")) return;
+    const start = tapStart.current;
+    tapStart.current = null;
+    if (start) {
+      // Ignore the click that ends a drag/scroll gesture (some Android WebViews emit one).
+      const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+      if (moved > 12) return;
+    } else if (performance.now() - lastUserScroll.current < 400) {
+      return;
+    }
+    clearAutoReturnTimer();
     onClose();
   }
 
